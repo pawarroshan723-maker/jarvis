@@ -1,0 +1,6 @@
+{
+  "name": "Jarvis Auto",
+  "description": "Voice-activated Android automation system with real-time environmental sensor triggers, offline rule engine, and hardware control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
