@@ -507,6 +507,7 @@ class ScheduledTaskManager(
         }
     }
 
+    @Suppress("DEPRECATION")
     fun sendSmsDirect(phoneNumber: String, message: String): Pair<Boolean, String> {
         val (cleanNumber, contactName) = resolveTargetPhoneNumber(phoneNumber)
         if (cleanNumber.isBlank()) {

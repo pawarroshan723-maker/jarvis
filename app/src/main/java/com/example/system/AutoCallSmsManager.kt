@@ -21,10 +21,10 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 data class AutoCallSmsConfig(
-    val isAutoSmsEnabled: Boolean = true,
+    val isAutoSmsEnabled: Boolean = false, // Secure default: user must explicitly enable auto-SMS
     val isAutoReadSmsEnabled: Boolean = true,
     val isAutoAnnounceCallsEnabled: Boolean = true,
-    val isAutoReplyMissedCallsEnabled: Boolean = true,
+    val isAutoReplyMissedCallsEnabled: Boolean = false, // Secure default: off until user opts-in
     val activePreset: String = "NORMAL", // NORMAL, DRIVING, MEETING, EMERGENCY_SOS, CUSTOM
     val customAutoReplyText: String = "Jarvis Auto: Currently unavailable. I will get back to you shortly.",
     val emergencyContact: String = "",
@@ -87,10 +87,10 @@ class AutoCallSmsManager(
 
     private fun loadConfig(): AutoCallSmsConfig {
         return AutoCallSmsConfig(
-            isAutoSmsEnabled = prefs.getBoolean(KEY_AUTO_SMS, true),
+            isAutoSmsEnabled = prefs.getBoolean(KEY_AUTO_SMS, false),
             isAutoReadSmsEnabled = prefs.getBoolean(KEY_AUTO_READ_SMS, true),
             isAutoAnnounceCallsEnabled = prefs.getBoolean(KEY_AUTO_ANNOUNCE_CALLS, true),
-            isAutoReplyMissedCallsEnabled = prefs.getBoolean(KEY_AUTO_REPLY_MISSED, true),
+            isAutoReplyMissedCallsEnabled = prefs.getBoolean(KEY_AUTO_REPLY_MISSED, false),
             activePreset = prefs.getString(KEY_ACTIVE_PRESET, "NORMAL") ?: "NORMAL",
             customAutoReplyText = prefs.getString(KEY_CUSTOM_REPLY_TEXT, PRESET_MESSAGES["CUSTOM"]) ?: PRESET_MESSAGES["CUSTOM"]!!,
             emergencyContact = prefs.getString(KEY_EMERGENCY_CONTACT, "") ?: "",

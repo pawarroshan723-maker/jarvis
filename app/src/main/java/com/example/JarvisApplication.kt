@@ -84,6 +84,10 @@ class JarvisApplication : Application() {
      */
     fun handleVoiceCommand(command: String, onCompleted: ((String) -> Unit)? = null) {
         if (command.isBlank()) return
+        if (speechManager.isAcousticSelfEcho(command)) {
+            android.util.Log.i("JarvisApp", "[EchoGuard] Discarded command matching recent spoken reply: '$command'")
+            return
+        }
         lastCommandFlow.value = command
         isExecutingCommand.value = true
 
@@ -93,6 +97,9 @@ class JarvisApplication : Application() {
                 val offlineResult = offlineIntentEngine.processCommand(command, currentTelem)
 
                 if (offlineResult.success) {
+                    if (offlineResult.intentAction == "CLEAR_CONVERSATION") {
+                        geminiAssistantEngine.clearConversationHistory()
+                    }
                     val response = offlineResult.spokenResponse
                     speechManager.speak(response)
                     repository.insertCommand(
@@ -107,11 +114,30 @@ class JarvisApplication : Application() {
                     // Check OfflineKnowledgeEngine before external calls
                     val offlineKnowledge = com.example.engine.OfflineKnowledgeEngine.answerQuery(command, this@JarvisApplication)
                     val response = if (offlineKnowledge.handled) {
+                        geminiAssistantEngine.conversationMemory.addTurn("user", command)
+                        geminiAssistantEngine.conversationMemory.addTurn("model", offlineKnowledge.answer)
                         offlineKnowledge.answer
                     } else {
                         try {
-                            val useSearch = command.lowercase().contains("search") || command.lowercase().contains("latest") || command.lowercase().contains("news")
-                            val useMaps = command.lowercase().contains("where") || command.lowercase().contains("map") || command.lowercase().contains("near")
+                            val cmdLower = command.lowercase()
+                            val isWeatherQuery = cmdLower.contains("weather") || cmdLower.contains("whether") ||
+                                    cmdLower.contains("forecast") || cmdLower.contains("temperature") ||
+                                    cmdLower.contains("rain") || cmdLower.contains("climate") ||
+                                    cmdLower.contains("हवामान") || cmdLower.contains("पाऊस") ||
+                                    (geminiAssistantEngine.conversationMemory.activeTopic == "Weather")
+
+                            val isRealTimeQuery = cmdLower.contains("today") || cmdLower.contains("yesterday") ||
+                                    cmdLower.contains("score") || cmdLower.contains("match") ||
+                                    cmdLower.contains("price") || cmdLower.contains("rate") ||
+                                    cmdLower.contains("current") || cmdLower.contains("who won") ||
+                                    cmdLower.contains("winner") || cmdLower.contains("live") ||
+                                    cmdLower.contains("latest") || cmdLower.contains("recent") ||
+                                    cmdLower.contains("news") || cmdLower.contains("election") ||
+                                    cmdLower.contains("stock") || isWeatherQuery ||
+                                    cmdLower.contains("आजचा") || cmdLower.contains("ताज्या बातम्या")
+
+                            val useSearch = cmdLower.contains("search") || isRealTimeQuery
+                            val useMaps = cmdLower.contains("where") || cmdLower.contains("map") || cmdLower.contains("near")
                             geminiAssistantEngine.queryAssistant(
                                 userQuery = command,
                                 enableHighThinking = false,

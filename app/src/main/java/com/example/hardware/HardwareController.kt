@@ -42,8 +42,12 @@ class HardwareController(private val context: Context) {
         context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
     private val audioManager: AudioManager? =
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-    private val vibrator: Vibrator? =
+    private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
         context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }
     private val batteryManager: BatteryManager? =
         context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
 
@@ -764,7 +768,7 @@ class HardwareController(private val context: Context) {
 
         // 3. General "play music" or "play songs" requested without query
         try {
-            val musicIntent = Intent(MediaStore.INTENT_ACTION_MUSIC_PLAYER).apply {
+            val musicIntent = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             if (musicIntent.resolveActivity(pm) != null) {
@@ -772,7 +776,16 @@ class HardwareController(private val context: Context) {
                 return Pair(true, "Music player opened")
             }
         } catch (e: Exception) {
-            // Ignore
+            try {
+                @Suppress("DEPRECATION")
+                val fallbackIntent = Intent(MediaStore.INTENT_ACTION_MUSIC_PLAYER).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (fallbackIntent.resolveActivity(pm) != null) {
+                    context.startActivity(fallbackIntent)
+                    return Pair(true, "Music player opened")
+                }
+            } catch (_: Exception) {}
         }
 
         // Try installed popular music apps

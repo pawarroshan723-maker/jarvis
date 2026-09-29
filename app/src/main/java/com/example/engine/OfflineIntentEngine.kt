@@ -141,25 +141,59 @@ class OfflineIntentEngine(
             )
         }
 
-        // ALWAYS-ON MIC COMMANDS (SCREEN OFF / SCREEN ON)
+        // 1. ALWAYS-ON MIC (SCREEN OFF & SCREEN ON)
         if (clean.contains("always mic on") || clean.contains("set always mic on") ||
             clean.contains("mic always on") || clean.contains("always on mic") ||
-            clean.contains("screen off mic") || clean.contains("mic on when screen off") ||
-            clean.contains("keep mic on") || clean.contains("नेहमी माईक चालू") ||
-            clean.contains("स्क्रीन बंद असताना माईक")
+            clean.contains("continuous mic") || clean.contains("keep mic on") ||
+            clean.contains("नेहमी माईक चालू") || clean.contains("माईक नेहमी चालू") ||
+            clean.contains("ऑलवेज ऑन माईक") || clean.contains("सतत माईक चालू")
         ) {
             speechManager?.setMicAlwaysOnMode(com.example.voice.MicAlwaysOnMode.ALWAYS_ON_SCREEN_OFF_AND_ON)
             return IntentResult(
                 success = true,
-                spokenResponse = if (isMarathi) "नेहमी माईक चालू मोड सक्रिय केला आहे, सर. स्क्रीन बंद असली तरी जार्व्हिस सतत ऐकत राहील."
-                else "Always-on microphone active, sir. Jarvis will now listen continuously even when the screen is powered off or locked.",
+                spokenResponse = if (isMarathi) "नेहमी माईक चालू मोड सक्रिय केला आहे, सर. स्क्रीन चालू किंवा लॉक असली तरी जार्व्हिस सतत ऐकत राहील."
+                else "Always-on microphone active, sir. Jarvis will listen continuously on both awake and locked screen.",
                 intentAction = "ALWAYS_MIC_ON"
             )
         }
 
+        // 2. LOCK-ONLY MIC (SCREEN OFF ONLY - SAVES BATTERY WHEN SCREEN AWAKE)
+        if (clean.contains("lock only mic") || clean.contains("lock screen only mic") ||
+            clean.contains("screen lock mic") || clean.contains("screen off mic") ||
+            clean.contains("mic only on lock") || clean.contains("lock only") ||
+            clean.contains("फक्त लॉक असताना माईक") || clean.contains("स्क्रीन लॉक असताना माईक") ||
+            clean.contains("स्क्रीन बंद असताना माईक") || clean.contains("लॉक स्क्रीन माईक") ||
+            clean.contains("फक्त लॉक माईक") || clean.contains("लॉक ओन्ली")
+        ) {
+            speechManager?.setMicAlwaysOnMode(com.example.voice.MicAlwaysOnMode.SCREEN_OFF_ONLY)
+            return IntentResult(
+                success = true,
+                spokenResponse = if (isMarathi) "लॉक-ओन्ली माईक मोड सक्रिय केला आहे, सर. स्क्रीन लॉक किंवा बंद असतानाच माईक ऐकत राहील."
+                else "Lock-only microphone mode engaged, sir. Listening will activate strictly when the device is locked or screen is off.",
+                intentAction = "LOCK_ONLY_MIC"
+            )
+        }
+
+        // 3. SCREEN-ON ONLY MIC (PAUSES WHEN SCREEN LOCKS)
+        if (clean.contains("screen on mic only") || clean.contains("mic screen on") ||
+            clean.contains("mic only when screen on") || clean.contains("screen on mic") ||
+            clean.contains("screen on only") || clean.contains("स्क्रीन चालू असताना माईक") ||
+            clean.contains("स्क्रीन ऑन माईक") || clean.contains("फक्त स्क्रीन चालू असताना")
+        ) {
+            speechManager?.setMicAlwaysOnMode(com.example.voice.MicAlwaysOnMode.SCREEN_ON_ONLY)
+            return IntentResult(
+                success = true,
+                spokenResponse = if (isMarathi) "स्क्रीन-ऑन माईक मोड सक्रिय केला आहे, सर. स्क्रीन चालू असतानाच माईक ऐकत राहील."
+                else "Microphone set to screen-on continuous listening mode, sir.",
+                intentAction = "SCREEN_ON_MIC"
+            )
+        }
+
+        // 4. MANUAL MIC / PUSH TO TALK
         if (clean.contains("turn off always mic") || clean.contains("disable always mic") ||
             clean.contains("push to talk") || clean.contains("manual mic") || clean == "mic off" ||
-            clean.contains("मॅन्युअल माईक")
+            clean.contains("stop listening") || clean.contains("मॅन्युअल माईक") ||
+            clean.contains("पुश टू टॉक") || clean.contains("माईक बंद करा") || clean.contains("माईक बंद कर")
         ) {
             speechManager?.setMicAlwaysOnMode(com.example.voice.MicAlwaysOnMode.MANUAL)
             return IntentResult(
@@ -167,18 +201,6 @@ class OfflineIntentEngine(
                 spokenResponse = if (isMarathi) "पुश टू टॉक मोड निवडला आहे. आवश्यकतेनुसार टॅप करा."
                 else "Always-on microphone deactivated, sir. Reverted to push-to-talk manual mode.",
                 intentAction = "MANUAL_MIC"
-            )
-        }
-
-        if (clean.contains("screen on mic only") || clean.contains("mic screen on") ||
-            clean.contains("mic only when screen on")
-        ) {
-            speechManager?.setMicAlwaysOnMode(com.example.voice.MicAlwaysOnMode.SCREEN_ON_ONLY)
-            return IntentResult(
-                success = true,
-                spokenResponse = if (isMarathi) "स्क्रीन चालू असतानाच माईक चालू राहील."
-                else "Microphone set to screen-on continuous listening mode, sir.",
-                intentAction = "SCREEN_ON_MIC"
             )
         }
 
@@ -410,7 +432,9 @@ class OfflineIntentEngine(
             clean.contains("torch on") || clean.contains("turn on torch") || clean == "lumos" ||
             clean == "flashlight" || clean == "torch" || clean.contains("turn on the light") || clean.contains("turn on light") ||
             clean.contains("टॉर्च चालू") || clean.contains("फ्लॅश चालू") || clean.contains("लाईट चालू") ||
-            clean.contains("टॉर्च लावा") || clean.contains("लाईट लावा") || clean.contains("टॉर्च ऑन") || clean.contains("फ्लॅश ऑन")
+            clean.contains("टॉर्च लावा") || clean.contains("टॉर्च लाव") || clean.contains("लाईट लावा") || clean.contains("लाईट लाव") ||
+            clean.contains("टॉर्च ऑन") || clean.contains("फ्लॅश ऑन") || clean.contains("टॉर्च पेटवा") || clean.contains("टॉर्च पेटव") ||
+            clean.contains("दिवा लावा") || clean.contains("दिवा लाव") || clean.contains("torch lav") || clean.contains("torch chalu")
         ) {
             val success = hardware.setFlashlight(true)
             val msg = if (isMarathi) {
@@ -425,7 +449,9 @@ class OfflineIntentEngine(
             clean.contains("torch off") || clean.contains("turn off torch") || clean == "nox" ||
             clean.contains("turn off the light") || clean.contains("turn off light") ||
             clean.contains("टॉर्च बंद") || clean.contains("फ्लॅश बंद") || clean.contains("लाईट बंद") ||
-            clean.contains("दिवा बंद") || clean.contains("टॉर्च ऑफ") || clean.contains("फ्लॅश ऑफ")
+            clean.contains("टॉर्च विझवा") || clean.contains("टॉर्च विझव") || clean.contains("लाईट विझवा") || clean.contains("लाईट विझव") ||
+            clean.contains("दिवा बंद") || clean.contains("टॉर्च ऑफ") || clean.contains("फ्लॅश ऑफ") ||
+            clean.contains("torch band") || clean.contains("torch off")
         ) {
             val success = hardware.setFlashlight(false)
             val msg = if (isMarathi) {
@@ -449,7 +475,9 @@ class OfflineIntentEngine(
 
         // 3. AUDIO & VOLUME CONTROL (English & Marathi)
         if (clean.contains("mute phone") || clean.contains("mute all") || clean == "silence" || clean.contains("silent mode") || clean == "mute" ||
-            clean.contains("म्यूट करा") || clean.contains("शांत करा") || clean.contains("सायलेंट करा") || clean.contains("आवाज बंद करा")
+            clean.contains("म्यूट करा") || clean.contains("म्यूट कर") || clean.contains("शांत करा") || clean.contains("शांत कर") ||
+            clean.contains("सायलेंट करा") || clean.contains("सायलेंट कर") || clean.contains("आवाज बंद करा") || clean.contains("आवाज बंद कर") ||
+            clean.contains("awaaz band") || clean.contains("mute karo")
         ) {
             val success = hardware.muteAllAudio()
             val msg = if (isMarathi) "सर्व आवाज म्यूट केला आहे आणि फोन सायलेंट मोडवर ठेवला आहे." else "All audio streams muted and set to silent mode."
@@ -457,7 +485,9 @@ class OfflineIntentEngine(
         }
 
         if (clean.contains("volume up") || clean.contains("increase volume") || clean.contains("turn up volume") ||
-            clean.contains("आवाज वाढवा") || clean.contains("आवाज मोठा करा") || clean.contains("व्हॉल्युम वाढवा")
+            clean.contains("आवाज वाढवा") || clean.contains("आवाज वाढव") || clean.contains("आवाज मोठा करा") || clean.contains("आवाज मोठा कर") ||
+            clean.contains("व्हॉल्युम वाढवा") || clean.contains("व्हॉल्युम वाढव") || clean.contains("मोठ्याने बोल") ||
+            clean.contains("awaaz vadhav") || clean.contains("volume vadhav")
         ) {
             val current = hardware.getMediaVolumePercent()
             val newVol = (current + 25).coerceAtMost(100)
@@ -467,7 +497,9 @@ class OfflineIntentEngine(
         }
 
         if (clean.contains("volume down") || clean.contains("decrease volume") || clean.contains("turn down volume") ||
-            clean.contains("आवाज कमी करा") || clean.contains("आवाज बारीक करा") || clean.contains("व्हॉल्युम कमी करा")
+            clean.contains("आवाज कमी करा") || clean.contains("आवाज कमी कर") || clean.contains("आवाज बारीक करा") || clean.contains("आवाज बारीक कर") ||
+            clean.contains("आवाज हळू करा") || clean.contains("आवाज हळू कर") || clean.contains("व्हॉल्युम कमी करा") || clean.contains("व्हॉल्युम कमी कर") ||
+            clean.contains("awaaz kami kar") || clean.contains("volume kami kar")
         ) {
             val current = hardware.getMediaVolumePercent()
             val newVol = (current - 25).coerceAtLeast(0)
@@ -477,7 +509,9 @@ class OfflineIntentEngine(
         }
 
         if (clean.contains("max volume") || clean.contains("maximum volume") || clean.contains("full volume") ||
-            clean.contains("फुल आवाज") || clean.contains("आवाज पूर्ण करा") || clean.contains("जास्तीत जास्त आवाज")
+            clean.contains("फुल आवाज") || clean.contains("पूर्ण आवाज") || clean.contains("आवाज १०० करा") || clean.contains("आवाज १००%") ||
+            clean.contains("आवाज फुल करा") || clean.contains("आवाज फुल कर") || clean.contains("जास्तीत जास्त आवाज") ||
+            clean.contains("full volume") || clean.contains("full awaaz")
         ) {
             val success = hardware.setMaxVolume()
             val msg = if (isMarathi) "आवाज १०० टक्के पूर्ण वाढवला आहे." else "Volume raised to maximum output."
@@ -490,7 +524,7 @@ class OfflineIntentEngine(
             return IntentResult(success, msg, "RINGER_VIBRATE")
         }
 
-        if (clean.contains("normal ringer") || clean.contains("unmute") || clean.contains("आवाज चालू करा") || clean.contains("अनम्यूट करा")) {
+        if (clean.contains("normal ringer") || clean.contains("unmute") || clean.contains("आवाज चालू करा") || clean.contains("आवाज चालू कर") || clean.contains("अनम्यूट करा") || clean.contains("अनम्यूट कर") || clean.contains("आवाज उघडा")) {
             hardware.setRingerMode("NORMAL")
             hardware.setMediaVolumePercent(60)
             val msg = if (isMarathi) "आवाज पूर्ववत सुरू केला आहे." else "Audio and ringer restored to standard level."
@@ -509,8 +543,10 @@ class OfflineIntentEngine(
         }
 
         // 4. SENSOR QUERIES (English & Marathi)
-        if ((clean.contains("battery") && (clean.contains("what") || clean.contains("level") || clean.contains("how much"))) ||
-            clean.contains("बॅटरी किती") || clean.contains("चार्जिंग किती") || clean.contains("बॅटरी लेव्हल") || clean.contains("बॅटरी सांगा")
+        if ((clean.contains("battery") && (clean.contains("what") || clean.contains("level") || clean.contains("how much") || clean.contains("percentage"))) ||
+            clean.contains("बॅटरी किती") || clean.contains("चार्जिंग किती") || clean.contains("बॅटरी लेव्हल") || clean.contains("बॅटरी सांगा") ||
+            clean.contains("बॅटरी किती टक्के") || clean.contains("चार्जिंग चालू आहे का") || clean.contains("चार्जिंग लागली आहे का") ||
+            clean.contains("battery kiti") || clean.contains("charging kiti")
         ) {
             val batt = currentTelemetry.batteryLevel
             val state = if (currentTelemetry.isCharging) (if (isMarathi) "चार्जिंग चालू आहे" else "currently charging") else (if (isMarathi) "बॅटरीवर चालू आहे" else "on battery power")
@@ -541,8 +577,10 @@ class OfflineIntentEngine(
         // 4a. MEDIA CONTROLS (PAUSE, RESUME, STOP, NEXT, PREVIOUS)
         if (clean == "pause" || clean == "pause music" || clean == "pause song" ||
             clean == "pause video" || clean == "pause playback" || clean == "pause youtube" ||
-            clean.contains("गाणे थांबवा") || clean.contains("गाणं थांबवा") || clean.contains("पॉज करा") ||
-            clean == "थांबवा" || clean == "पॉज"
+            clean.contains("गाणे थांबवा") || clean.contains("गाणं थांबवा") || clean.contains("गाणं थांबव") ||
+            clean.contains("गाणे थांबव") || clean.contains("गाणी थांबवा") || clean.contains("गाणी थांबव") ||
+            clean.contains("गाणं पॉज") || clean.contains("गाणे पॉज") || clean.contains("पॉज करा") || clean.contains("पॉज कर") ||
+            clean == "थांबवा" || clean == "थांबव" || clean == "पॉज" || clean.contains("gana thambav") || clean.contains("pause kar")
         ) {
             val (success, _) = hardware.controlMedia(com.example.hardware.MediaControlAction.PAUSE)
             val msg = if (isMarathi) "गाणे थांबवले आहे, सर." else "Playback paused, sir."
@@ -551,7 +589,10 @@ class OfflineIntentEngine(
 
         if (clean == "resume" || clean == "resume music" || clean == "resume song" ||
             clean == "resume playback" || clean == "continue music" || clean == "unpause" ||
-            clean.contains("गाणे पुन्हा सुरू करा") || clean.contains("गाणे चालू करा") || clean == "सुरू करा"
+            clean.contains("गाणे पुन्हा सुरू करा") || clean.contains("गाणं पुन्हा सुरू") || clean.contains("गाणे पुन्हा सुरू") ||
+            clean.contains("गाणे चालू करा") || clean.contains("गाणं चालू करा") || clean.contains("गाणं चालू कर") ||
+            clean.contains("गाणे चालू कर") || clean.contains("गाणं सुरू कर") || clean.contains("गाणे सुरू करा") ||
+            clean == "सुरू करा" || clean == "सुरू कर" || clean == "चालू करा" || clean == "चालू कर" || clean == "प्ले करा" || clean == "प्ले कर"
         ) {
             val (success, _) = hardware.controlMedia(com.example.hardware.MediaControlAction.PLAY)
             val msg = if (isMarathi) "गाणे पुन्हा सुरू केले आहे, सर." else "Playback resumed, sir."
@@ -560,8 +601,8 @@ class OfflineIntentEngine(
 
         if (clean == "next" || clean == "next song" || clean == "next track" ||
             clean == "next video" || clean == "skip" || clean == "skip song" || clean == "skip track" ||
-            clean.contains("पुढचे गाणे") || clean.contains("पुढील गाणे") || clean.contains("नेक्स्ट गाणे") ||
-            clean == "पुढचे" || clean == "नेक्स्ट"
+            clean.contains("पुढचे गाणे") || clean.contains("पुढचं गाणं") || clean.contains("पुढील गाणे") || clean.contains("नेक्स्ट गाणे") ||
+            clean.contains("पुढचं लाव") || clean.contains("पुढे कर") || clean == "पुढचे" || clean == "पुढचं" || clean == "नेक्स्ट"
         ) {
             val (success, _) = hardware.controlMedia(com.example.hardware.MediaControlAction.NEXT)
             val msg = if (isMarathi) "पुढचे गाणे लावले आहे, सर." else "Skipped to next track, sir."
@@ -570,16 +611,20 @@ class OfflineIntentEngine(
 
         if (clean == "previous" || clean == "previous song" || clean == "previous track" ||
             clean == "previous video" || clean == "back song" || clean == "play previous" ||
-            clean.contains("मागचे गाणे") || clean.contains("मागील गाणे") || clean == "मागचे"
+            clean.contains("मागचे गाणे") || clean.contains("मागचं गाणं") || clean.contains("मागील गाणे") ||
+            clean.contains("मागचं लाव") || clean.contains("मागे कर") || clean == "मागचे" || clean == "मागचं"
         ) {
             val (success, _) = hardware.controlMedia(com.example.hardware.MediaControlAction.PREVIOUS)
             val msg = if (isMarathi) "मागचे गाणे लावले आहे, सर." else "Playing previous track, sir."
             return IntentResult(success, msg, "MEDIA_PREVIOUS")
         }
 
-        if (clean == "stop" || clean == "stop music" || clean == "stop song" ||
-            clean == "stop playback" || clean == "stop video" || clean == "stop youtube" ||
-            clean.contains("गाणे बंद करा") || clean.contains("म्युझिक बंद करा") || clean.contains("संगीत बंद करा")
+        if (clean == "stop" || clean == "stop music" || clean == "stop song" || clean == "stop playback" ||
+            clean == "stop video" || clean == "stop youtube" || clean == "stop it" ||
+            clean.contains("गाणे बंद करा") || clean.contains("गाणं बंद करा") || clean.contains("गाणं बंद कर") ||
+            clean.contains("गाणी बंद करा") || clean.contains("गाणी बंद कर") || clean.contains("गाणं बंद") ||
+            clean.contains("म्युझिक बंद करा") || clean.contains("म्युझिक बंद कर") || clean.contains("संगीत बंद करा") ||
+            clean.contains("संगीत बंद कर") || clean.contains("gana band")
         ) {
             val (success, _) = hardware.controlMedia(com.example.hardware.MediaControlAction.STOP)
             val msg = if (isMarathi) "गाणे बंद केले आहे, सर." else "Playback stopped, sir."
@@ -625,20 +670,28 @@ class OfflineIntentEngine(
         // 4c. SONG & MUSIC PLAYBACK (English & Marathi) with YouTube, VLC, Spotify & Local Audio Routing
         val isMusicCommand = clean.startsWith("play song") || clean.startsWith("play music") || clean.startsWith("play songs") ||
             clean.startsWith("play track") || clean.startsWith("play local") || clean.startsWith("play offline") ||
-            clean.contains("गाणे लावा") || clean.contains("गाणी वाजवा") || clean.contains("गाणी लावा") ||
-            clean.contains("संगीत चालू करा") || clean.contains("सॉन्ग लावा") || clean.contains("सॉन्ग वाजवा") ||
+            clean.contains("गाणे लावा") || clean.contains("गाणे लाव") || clean.contains("गाणं लावा") || clean.contains("गाणं लाव") ||
+            clean.contains("गाणी वाजवा") || clean.contains("गाणी वाजव") || clean.contains("गाणी लावा") || clean.contains("गाणी लाव") ||
+            clean.contains("गाणं वाजवा") || clean.contains("गाणं वाजव") || clean.contains("गाणे वाजवा") || clean.contains("गाणे वाजव") ||
+            clean.contains("गाणं सुरू करा") || clean.contains("गाणं सुरू कर") || clean.contains("गाणे सुरू करा") || clean.contains("गाणे सुरू कर") ||
+            clean.contains("गाणं चालू करा") || clean.contains("गाणं चालू कर") || clean.contains("गाणे चालू करा") || clean.contains("गाणे चालू कर") ||
+            clean.contains("संगीत चालू करा") || clean.contains("संगीत चालू कर") || clean.contains("संगीत लावा") || clean.contains("संगीत लाव") ||
+            clean.contains("सॉन्ग लावा") || clean.contains("सॉन्ग लाव") || clean.contains("सॉंग लावा") || clean.contains("सॉंग लाव") ||
+            clean.contains("सॉन्ग वाजवा") || clean.contains("सॉन्ग वाजव") || clean.contains("सॉंग वाजवा") || clean.contains("सॉंग वाजव") ||
+            clean.contains("सॉन्ग प्ले करा") || clean.contains("सॉन्ग प्ले कर") || clean.contains("सॉंग प्ले करा") || clean.contains("सॉंग प्ले कर") ||
             clean.contains("यूट्यूब वर") || clean.contains("यूट्यूबवर") || clean.contains("vlc वर") || clean.contains("vlc मध्ये") ||
-            clean.contains("स्पॉटिफायवर") || clean.contains("स्थानिक गाणे") ||
-            (clean.contains("youtube") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("सॉन्ग") || clean.contains("लाव"))) ||
-            (clean.contains("vlc") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("सॉन्ग") || clean.contains("वाजवा"))) ||
-            (clean.contains("spotify") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("सॉन्ग") || clean.contains("लाव"))) ||
+            clean.contains("स्पॉटिफायवर") || clean.contains("स्थानिक गाणे") || clean.contains("स्थानिक गाणं") ||
+            clean.contains("gaana lav") || clean.contains("gana lav") || clean.contains("gaani vajav") || clean.contains("song lav") || clean.contains("music chalu") ||
+            (clean.contains("youtube") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("गाणं") || clean.contains("सॉन्ग") || clean.contains("लाव") || clean.contains("चालू"))) ||
+            (clean.contains("vlc") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("गाणं") || clean.contains("सॉन्ग") || clean.contains("वाजवा"))) ||
+            (clean.contains("spotify") && (clean.contains("play") || clean.contains("गाणे") || clean.contains("गाणं") || clean.contains("सॉन्ग") || clean.contains("लाव"))) ||
             (clean.startsWith("open ") && (clean.contains(" and play ") || clean.contains(" play "))) ||
             (clean.startsWith("play ") && !clean.contains("game") && !clean.contains("football") && !clean.contains("cricket"))
 
         if (isMusicCommand) {
             val detectedPlayer = when {
                 clean.contains("vlc") || clean.contains("व्हीएलसी") -> "vlc"
-                clean.contains("youtube") || clean.contains("यूट्यूब") -> "youtube"
+                clean.contains("youtube") || clean.contains("यूट्यूब") || clean.contains("युट्युब") || clean.contains("युट्यूब") -> "youtube"
                 clean.contains("spotify") || clean.contains("स्पॉटिफाय") -> "spotify"
                 clean.contains("local") || clean.contains("स्थानिक") || clean.contains("offline") -> "local"
                 else -> null
@@ -676,26 +729,77 @@ class OfflineIntentEngine(
                 .replace("spotify", "")
                 .replace("यूट्यूब वर", "")
                 .replace("यूट्यूबवर", "")
+                .replace("युट्युबवर", "")
+                .replace("युट्यूबवर", "")
                 .replace("यूट्यूब उघडून", "")
                 .replace("यूट्यूब", "")
+                .replace("युट्युब", "")
                 .replace("vlc वर", "")
                 .replace("vlc मध्ये", "")
                 .replace("स्पॉटिफायवर", "")
                 .replace("स्पॉटिफाय", "")
                 .replace("स्थानिक गाणे लावा", "")
+                .replace("स्थानिक गाणे लाव", "")
+                .replace("स्थानिक गाणं लावा", "")
+                .replace("स्थानिक गाणं लाव", "")
                 .replace("स्थानिक गाणे", "")
+                .replace("स्थानिक गाणं", "")
                 .replace("गाणे लावा", "")
+                .replace("गाणे लाव", "")
+                .replace("गाणं लावा", "")
+                .replace("गाणं लाव", "")
                 .replace("गाणी वाजवा", "")
+                .replace("गाणी वाजव", "")
                 .replace("गाणी लावा", "")
+                .replace("गाणी लाव", "")
+                .replace("गाणं वाजवा", "")
+                .replace("गाणं वाजव", "")
+                .replace("गाणे वाजवा", "")
+                .replace("गाणे वाजव", "")
+                .replace("गाणं सुरू करा", "")
+                .replace("गाणं सुरू कर", "")
+                .replace("गाणे सुरू करा", "")
+                .replace("गाणे सुरू कर", "")
+                .replace("गाणं चालू करा", "")
+                .replace("गाणं चालू कर", "")
+                .replace("गाणे चालू करा", "")
+                .replace("गाणे चालू कर", "")
                 .replace("संगीत चालू करा", "")
+                .replace("संगीत चालू कर", "")
+                .replace("संगीत लावा", "")
+                .replace("संगीत लाव", "")
                 .replace("सॉन्ग लावा", "")
+                .replace("सॉन्ग लाव", "")
+                .replace("सॉंग लावा", "")
+                .replace("सॉंग लाव", "")
                 .replace("सॉन्ग वाजवा", "")
+                .replace("सॉन्ग वाजव", "")
+                .replace("सॉंग वाजवा", "")
+                .replace("सॉंग वाजव", "")
+                .replace("सॉन्ग प्ले करा", "")
+                .replace("सॉन्ग प्ले कर", "")
+                .replace("सॉंग प्ले करा", "")
+                .replace("सॉंग प्ले कर", "")
                 .replace("प्ले करा", "")
+                .replace("प्ले कर", "")
                 .replace("सुरू करा", "")
+                .replace("सुरू कर", "")
+                .replace("चालू करा", "")
+                .replace("चालू कर", "")
+                .replace("gaana lav", "")
+                .replace("gana lav", "")
+                .replace("gaani vajav", "")
+                .replace("song lav", "")
                 .replace("गाणे", "")
+                .replace("गाणं", "")
+                .replace("गाणी", "")
                 .replace("सॉन्ग", "")
+                .replace("सॉंग", "")
+                .replace("संगीता", "")
+                .replace("संगीत", "")
                 .replace("लाव", "")
                 .replace("वाजवा", "")
+                .replace("वाजव", "")
                 .trim()
 
             val (success, desc) = hardware.playSongOrMusic(songQuery, detectedPlayer)
@@ -910,7 +1014,21 @@ class OfflineIntentEngine(
 
                 val numRegex = Regex("""(?:to|number|नंबर)\s*(\+?\d{8,15})""")
                 val numMatch = numRegex.find(clean) ?: Regex("""(\+?\d{10,12})""").find(clean)
-                val phoneNumber = numMatch?.groupValues?.get(1) ?: if (isGeminiTask) "" else "9876543210"
+                val phoneNumber = numMatch?.groupValues?.get(1) ?: ""
+
+                // Safety guard: if scheduling an SMS, require recipient number instead of defaulting to a stranger
+                if (!isGeminiTask && phoneNumber.isBlank()) {
+                    val promptUser = if (isMarathi) {
+                        "एसएमएस शेड्युल करण्यासाठी कृपया मोबाईल नंबर किंवा संपर्काचे नाव सांगा."
+                    } else {
+                        "Please specify a recipient phone number or contact to schedule this SMS, sir."
+                    }
+                    return IntentResult(
+                        success = true,
+                        spokenResponse = promptUser,
+                        intentAction = "SCHEDULE_SMS_MISSING_RECIPIENT"
+                    )
+                }
 
                 val msgRegex = Regex("""(?:saying|text|message|body|prompt|मजकूर)\s*['"]?([^'"]+)['"]?""")
                 val msgMatch = msgRegex.find(clean)
@@ -1179,6 +1297,16 @@ class OfflineIntentEngine(
                     val msg = if (isMarathi) "जेमिनी ३.७ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.7 Flash model engaged, sir."
                     return IntentResult(true, msg, "SWITCH_MODEL_3_7")
                 }
+                if (clean.contains("3.8") || clean.contains("३.८")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_8_FLASH)
+                    val msg = if (isMarathi) "जेमिनी ३.८ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.8 Flash model engaged, sir."
+                    return IntentResult(true, msg, "SWITCH_MODEL_3_8")
+                }
+                if (clean.contains("3.7") || clean.contains("३.७")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_7_FLASH)
+                    val msg = if (isMarathi) "जेमिनी ३.७ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.7 Flash model engaged, sir."
+                    return IntentResult(true, msg, "SWITCH_MODEL_3_7")
+                }
                 if (clean.contains("3.6") || clean.contains("३.६")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_6_FLASH)
                     val msg = if (isMarathi) "जेमिनी ३.६ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.6 Flash model engaged, sir."
@@ -1194,15 +1322,25 @@ class OfflineIntentEngine(
                     val msg = if (isMarathi) "जेमिनी ३.१ फ्लॅश लाईट मॉडेल सक्रिय केले आहे." else "Gemini 3.1 Flash Lite engaged, sir. High quota limits."
                     return IntentResult(true, msg, "SWITCH_MODEL_3_1_LITE")
                 }
-                if (clean.contains("lite latest") || clean.contains("flash lite latest")) {
+                if (clean.contains("preview") || clean.contains("3 preview") || clean.contains("प्रिव्ह्यू")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_FLASH_PREVIEW)
+                    val msg = if (isMarathi) "जेमिनी ३ फ्लॅश प्रिव्ह्यू मॉडेल सक्रिय केले आहे." else "Gemini 3 Flash Preview model engaged, sir."
+                    return IntentResult(true, msg, "SWITCH_MODEL_3_PREVIEW")
+                }
+                if (clean.contains("flash lite latest") || clean.contains("lite latest")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_FLASH_LITE_LATEST)
-                    val msg = if (isMarathi) "जेमिनी फ्लॅश-लाईट लेटेस्ट मॉडेल सक्रिय केले आहे." else "Gemini Flash-Lite Latest model engaged, sir."
+                    val msg = if (isMarathi) "जेमिनी फ्लॅश-लाईट लेटेस्ट मॉडेल सक्रिय केले आहे." else "Gemini Flash-Lite Latest dynamic alias engaged, sir."
                     return IntentResult(true, msg, "SWITCH_MODEL_FLASH_LITE_LATEST")
                 }
                 if (clean.contains("latest") || clean.contains("flash latest") || clean.contains("लेटेस्ट")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_FLASH_LATEST)
                     val msg = if (isMarathi) "जेमिनी फ्लॅश लेटेस्ट मॉडेल सक्रिय केले आहे." else "Gemini Flash Latest model engaged, sir."
                     return IntentResult(true, msg, "SWITCH_MODEL_FLASH_LATEST")
+                }
+                if (clean.contains("2.5") || clean.contains("२.५")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_2_5_FLASH)
+                    val msg = if (isMarathi) "जेमिनी २.५ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 2.5 Flash model engaged, sir."
+                    return IntentResult(true, msg, "SWITCH_MODEL_2_5")
                 }
                 if (clean.contains("3.5") || clean.contains("3 5") || clean.contains("३.५") || clean.contains("flash") || clean.contains("फ्लॅश")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_5_FLASH)

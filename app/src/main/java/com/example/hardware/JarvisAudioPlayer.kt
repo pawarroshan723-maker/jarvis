@@ -104,6 +104,20 @@ class JarvisAudioPlayer(private val context: Context) {
         }
     }
 
+    private var isDucked = false
+
+    fun duckVolume(duck: Boolean) {
+        try {
+            if (isDucked == duck) return
+            isDucked = duck
+            val vol = if (duck) 0.15f else 1.0f
+            mediaPlayer?.setVolume(vol, vol)
+            Log.d("JarvisAudioPlayer", "AudioPlayer duck volume set to: $vol (ducked=$duck)")
+        } catch (e: Exception) {
+            Log.w("JarvisAudioPlayer", "Error adjusting duck volume: ${e.message}")
+        }
+    }
+
     fun release() {
         stop()
     }

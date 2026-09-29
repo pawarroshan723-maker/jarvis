@@ -24,20 +24,30 @@ class ExampleUnitTest {
         val tiers = com.example.engine.GeminiModelTier.ALL_AVAILABLE_MODELS
         assertTrue(tiers.any { it.modelId == "cascade_lite" })
         assertTrue(tiers.any { it.modelId == "cascade_flash" })
+        assertTrue(tiers.any { it.modelId == "auto_cascade" })
+
+        // Dynamic Aliases
+        assertTrue(tiers.any { it.modelId == "gemini-flash-latest" })
+        assertTrue(tiers.any { it.modelId == "gemini-flash-lite-latest" })
+
+        // Gemini 3.x Flash
         assertTrue(tiers.any { it.modelId == "gemini-3.8-flash" })
         assertTrue(tiers.any { it.modelId == "gemini-3.7-flash" })
         assertTrue(tiers.any { it.modelId == "gemini-3.6-flash" })
         assertTrue(tiers.any { it.modelId == "gemini-3.5-flash" })
+        assertTrue(tiers.any { it.modelId == "gemini-3-flash-preview" })
+
+        // Gemini Flash-Lite
         assertTrue(tiers.any { it.modelId == "gemini-3.5-flash-lite" })
-        assertTrue(tiers.any { it.modelId == "gemini-3.1-flash-lite-preview" })
-        assertTrue(tiers.any { it.modelId == "gemini-flash-latest" })
-        assertTrue(tiers.any { it.modelId == "gemini-flash-lite-latest" })
+        assertTrue(tiers.any { it.modelId == "gemini-3.1-flash-lite" })
+
+        // Gemini 2.x Series
+        assertTrue(tiers.any { it.modelId == "gemini-2.5-flash" })
 
         assertEquals(3, com.example.engine.GeminiModelTier.CASCADES.size)
-        assertEquals(8, com.example.engine.GeminiModelTier.INDIVIDUAL_MODELS.size)
+        assertEquals(10, com.example.engine.GeminiModelTier.INDIVIDUAL_MODELS.size)
 
-        // Strictly verify NO 2.5 or 2.0 or 1.5 models exist
-        assertFalse(tiers.any { it.modelId.contains("2.5") })
+        // Strictly verify NO deprecated 1.5 or 2.0 models exist
         assertFalse(tiers.any { it.modelId.contains("2.0") })
         assertFalse(tiers.any { it.modelId.contains("1.5") })
     }
@@ -118,10 +128,10 @@ class ExampleUnitTest {
     @Test
     fun verifyAutoCallSmsConfigAndPresets() {
         val config = com.example.system.AutoCallSmsConfig()
-        assertTrue(config.isAutoSmsEnabled)
+        assertFalse(config.isAutoSmsEnabled) // Secure opt-in default
         assertTrue(config.isAutoReadSmsEnabled)
         assertTrue(config.isAutoAnnounceCallsEnabled)
-        assertTrue(config.isAutoReplyMissedCallsEnabled)
+        assertFalse(config.isAutoReplyMissedCallsEnabled) // Secure opt-in default
         assertEquals("NORMAL", config.activePreset)
         assertEquals(3, config.antiSpamCooldownMinutes)
 
@@ -395,5 +405,33 @@ class ExampleUnitTest {
         val (wake7, cmd7) = speechManager.extractWakeWordAndCommand("turn on flashlight")
         assertFalse(wake7)
         assertEquals("turn on flashlight", cmd7)
+    }
+
+    @Test
+    fun verifyGeminiQuotaCircuitBreakerAndCooldowns() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val engine = com.example.engine.GeminiAssistantEngine(context)
+
+        // Initial state: no models in cooldown
+        assertFalse(engine.isModelInCooldown("gemini-3.8-flash"))
+        assertTrue(engine.exhaustedModelList.value.isEmpty())
+
+        // Trigger circuit breaker for 3.8 flash
+        engine.recordModelQuotaExhausted("gemini-3.8-flash", 10)
+        assertTrue(engine.isModelInCooldown("gemini-3.8-flash"))
+        // Dynamic alias should also be linked
+        assertTrue(engine.isModelInCooldown("gemini-flash-latest"))
+        // Other model buckets should remain free
+        assertFalse(engine.isModelInCooldown("gemini-3.5-flash"))
+        assertFalse(engine.isModelInCooldown("gemini-3.5-flash-lite"))
+
+        assertTrue(engine.exhaustedModelList.value.contains("gemini-3.8-flash"))
+        assertTrue(engine.exhaustedModelList.value.contains("gemini-flash-latest"))
+
+        // Reset cooldowns
+        engine.clearAllCooldowns()
+        assertFalse(engine.isModelInCooldown("gemini-3.8-flash"))
+        assertFalse(engine.isModelInCooldown("gemini-flash-latest"))
+        assertTrue(engine.exhaustedModelList.value.isEmpty())
     }
 }

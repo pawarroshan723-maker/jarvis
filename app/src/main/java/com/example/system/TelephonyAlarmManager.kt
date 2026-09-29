@@ -188,6 +188,7 @@ class TelephonyAlarmManager(private val context: Context) {
     }
 
     // --- SMS MANAGEMENT ---
+    @Suppress("DEPRECATION")
     fun sendSms(number: String, message: String): Pair<Boolean, String> {
         val cleanNumber = number.replace(Regex("[^0-9+]"), "")
         if (cleanNumber.isBlank()) {

@@ -182,7 +182,7 @@ fun JarvisTopBar(
                 // Cloud Toggle
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (isOnlineEnabled) ArcCyanContainer else SurfaceVariantDark)
                         .border(
@@ -202,7 +202,7 @@ fun JarvisTopBar(
                         imageVector = if (isOnlineEnabled) Icons.Default.Cloud else Icons.Default.CloudOff,
                         contentDescription = "Toggle Cloud AI",
                         tint = if (isOnlineEnabled) ArcCyan else TextMuted,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
@@ -210,7 +210,7 @@ fun JarvisTopBar(
                 if (isOnlineEnabled) {
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(36.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (isHighThinkingEnabled) NeonAmber.copy(alpha = 0.15f) else SurfaceVariantDark)
                             .border(
@@ -230,7 +230,7 @@ fun JarvisTopBar(
                             imageVector = Icons.Default.Psychology,
                             contentDescription = "Toggle High Thinking",
                             tint = if (isHighThinkingEnabled) NeonAmber else TextMuted,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

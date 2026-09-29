@@ -10,11 +10,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+/**
+ * Internal alarm receiver for scheduled tasks.
+ * Marked android:exported="false" to prevent unauthorized apps from triggering tasks.
+ */
 class ScheduledTaskReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "ScheduledTaskReceiver"
         private const val WAKELOCK_TAG = "Jarvis:ScheduledTaskWakeLock"
+        // 60-second WakeLock safely accommodates remote Gemini API queries and SMS delivery
+        private const val WAKELOCK_TIMEOUT_MS = 60000L
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,15 +29,6 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
 
         val app = context.applicationContext as? JarvisApplication ?: return
         val taskManager = app.scheduledTaskManager
-
-        if (action == Intent.ACTION_BOOT_COMPLETED ||
-            action == "android.intent.action.MY_PACKAGE_REPLACED" ||
-            action == "android.intent.action.QUICKBOOT_POWERON"
-        ) {
-            Log.i(TAG, "Device booted or app updated. Rescheduling all active scheduled tasks...")
-            taskManager.rescheduleAllPendingTasks()
-            return
-        }
 
         if (action == ScheduledTaskManager.ACTION_EXECUTE_TASK) {
             val taskId = intent.getLongExtra(ScheduledTaskManager.EXTRA_TASK_ID, -1L)
@@ -45,7 +42,7 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
             val pendingResult = goAsync()
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)?.apply {
-                acquire(15000) // Acquire WakeLock for up to 15s to guarantee completion
+                acquire(WAKELOCK_TIMEOUT_MS)
             }
 
             CoroutineScope(Dispatchers.IO).launch {

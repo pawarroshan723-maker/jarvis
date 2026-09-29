@@ -157,7 +157,7 @@ object MarathiTtsManager {
             val fallbackLocale = if (enInAvail >= TextToSpeech.LANG_AVAILABLE) {
                 LOCALE_ENGLISH_INDIA
             } else {
-                Locale("en", "IN")
+                Locale.Builder().setLanguage("en").setRegion("IN").build()
             }
 
             try {
@@ -560,7 +560,7 @@ object MarathiTtsManager {
         } catch (e: Exception) { false }
 
         val voiceName = try {
-            tts.voice?.name ?: tts.language?.displayName ?: "Default"
+            tts.voice?.name ?: tts.voice?.locale?.displayName ?: "Default"
         } catch (e: Exception) { "Standard" }
 
         val status = when {

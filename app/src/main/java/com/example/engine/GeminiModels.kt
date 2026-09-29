@@ -2,10 +2,7 @@ package com.example.engine
 
 /**
  * Represents selectable Gemini Model Tiers in Jarvis.
- * Features two distinct Cascades (Cascade Lite & Cascade Flash) plus separate individual models:
- * - Cascade Lite (3.5 Flash Lite -> Flash-Lite Latest -> 3.1 Flash Lite)
- * - Cascade Flash (3.8 Flash -> 3.7 Flash -> 3.6 Flash -> 3.5 Flash -> Flash Latest)
- * - Separate individual models from AI Studio
+ * Features Cascades plus exact Gemini 3.x / 2.x models and dynamic aliases from Google AI Studio.
  */
 enum class GeminiModelTier(
     val id: String,
@@ -18,14 +15,14 @@ enum class GeminiModelTier(
         id = "cascade_lite",
         shortLabel = "⚡ Cascade Lite (Zero 503 & High Quota)",
         modelId = "cascade_lite",
-        description = "Intelligently cascades strictly across lightweight Flash-Lite models (3.5 Flash Lite ➔ Flash-Lite Latest ➔ 3.1 Flash Lite) for lightning-fast voice responses and zero 503 load errors.",
+        description = "Intelligently cascades strictly across lightweight Flash-Lite models (Gemini 3.5 Flash-Lite ➔ Gemini 3.1 Flash-Lite ➔ Gemini Flash-Lite Latest ➔ Gemini 3.5 Flash) for lightning-fast voice responses.",
         isCascade = true
     ),
     CASCADE_FLASH(
         id = "cascade_flash",
         shortLabel = "🔥 Cascade Flash (Flagship Reasoning)",
         modelId = "cascade_flash",
-        description = "Cascades across flagship Flash models (3.8 Flash ➔ 3.7 Flash ➔ 3.6 Flash ➔ 3.5 Flash ➔ Flash Latest) for maximum multimodal intelligence with automatic fallback on quota limits.",
+        description = "Cascades across flagship Flash models (Gemini Flash Latest ➔ Gemini 3.8 Flash ➔ Gemini 3.7 Flash ➔ Gemini 3.5 Flash ➔ Gemini 2.5 Flash) for maximum intelligence.",
         isCascade = true
     ),
     AUTO_CASCADE(
@@ -35,53 +32,65 @@ enum class GeminiModelTier(
         description = "Balanced intelligent routing across Flash & Flash-Lite models based on query complexity.",
         isCascade = true
     ),
-    GEMINI_3_8_FLASH(
-        id = "3_8_flash",
-        shortLabel = "Gemini 3.8 Flash",
-        modelId = "gemini-3.8-flash",
-        description = "Latest flagship Gemini 3.8 Flash model in AI Studio"
-    ),
-    GEMINI_3_7_FLASH(
-        id = "3_7_flash",
-        shortLabel = "Gemini 3.7 Flash",
-        modelId = "gemini-3.7-flash",
-        description = "Highly capable multimodal model for fast and complex reasoning"
-    ),
-    GEMINI_3_6_FLASH(
-        id = "3_6_flash",
-        shortLabel = "Gemini 3.6 Flash",
-        modelId = "gemini-3.6-flash",
-        description = "Balanced speed and quality model"
-    ),
-    GEMINI_3_5_FLASH(
-        id = "3_5_flash",
-        shortLabel = "Gemini 3.5 Flash",
-        modelId = "gemini-3.5-flash",
-        description = "Fast, versatile multimodal model for everyday tasks"
-    ),
-    GEMINI_3_5_FLASH_LITE(
-        id = "3_5_flash_lite",
-        shortLabel = "Gemini 3.5 Flash Lite",
-        modelId = "gemini-3.5-flash-lite",
-        description = "Lightweight, ultra-fast responses with high quota allowance"
-    ),
-    GEMINI_3_1_FLASH_LITE(
-        id = "3_1_flash_lite",
-        shortLabel = "Gemini 3.1 Flash Lite",
-        modelId = "gemini-3.1-flash-lite-preview",
-        description = "High throughput and low latency model with generous rate limits"
-    ),
     GEMINI_FLASH_LATEST(
         id = "flash_latest",
         shortLabel = "Gemini Flash Latest",
         modelId = "gemini-flash-latest",
-        description = "Always points to the newest stable Flash model in Google AI Studio"
+        description = "Dynamically points to the latest stable version of the flagship Flash tier (e.g., gemini-3.8-flash)"
     ),
     GEMINI_FLASH_LITE_LATEST(
         id = "flash_lite_latest",
         shortLabel = "Gemini Flash-Lite Latest",
         modelId = "gemini-flash-lite-latest",
-        description = "Always points to the newest lightweight Flash-Lite endpoint"
+        description = "Dynamically points to the latest stable version of the Flash-Lite tier (e.g., gemini-3.5-flash-lite)"
+    ),
+    GEMINI_3_8_FLASH(
+        id = "3_8_flash",
+        shortLabel = "Gemini 3.8 Flash",
+        modelId = "gemini-3.8-flash",
+        description = "Stable (Latest) flagship Gemini Flash model in AI Studio"
+    ),
+    GEMINI_3_7_FLASH(
+        id = "3_7_flash",
+        shortLabel = "Gemini 3.7 Flash",
+        modelId = "gemini-3.7-flash",
+        description = "Stable multimodal model for fast reasoning and coding"
+    ),
+    GEMINI_3_6_FLASH(
+        id = "3_6_flash",
+        shortLabel = "Gemini 3.6 Flash",
+        modelId = "gemini-3.6-flash",
+        description = "Stable speed and quality model"
+    ),
+    GEMINI_3_5_FLASH(
+        id = "3_5_flash",
+        shortLabel = "Gemini 3.5 Flash",
+        modelId = "gemini-3.5-flash",
+        description = "Stable versatile multimodal model for everyday tasks"
+    ),
+    GEMINI_3_FLASH_PREVIEW(
+        id = "3_flash_preview",
+        shortLabel = "Gemini 3 Flash Preview",
+        modelId = "gemini-3-flash-preview",
+        description = "Preview edition of Gemini 3 Flash"
+    ),
+    GEMINI_3_5_FLASH_LITE(
+        id = "3_5_flash_lite",
+        shortLabel = "Gemini 3.5 Flash-Lite",
+        modelId = "gemini-3.5-flash-lite",
+        description = "Active (Latest) lightweight model for text, image, audio, video, PDF"
+    ),
+    GEMINI_3_1_FLASH_LITE(
+        id = "3_1_flash_lite",
+        shortLabel = "Gemini 3.1 Flash-Lite",
+        modelId = "gemini-3.1-flash-lite",
+        description = "Active high-throughput lightweight model with generous rate limits"
+    ),
+    GEMINI_2_5_FLASH(
+        id = "2_5_flash",
+        shortLabel = "Gemini 2.5 Flash",
+        modelId = "gemini-2.5-flash",
+        description = "Stable Gemini 2.x generation workhorse model"
     );
 
     companion object {
@@ -91,16 +100,29 @@ enum class GeminiModelTier(
             AUTO_CASCADE
         )
 
-        val INDIVIDUAL_MODELS = listOf(
+        val DYNAMIC_ALIASES = listOf(
+            GEMINI_FLASH_LATEST,
+            GEMINI_FLASH_LITE_LATEST
+        )
+
+        val GEMINI_3_FLASH = listOf(
             GEMINI_3_8_FLASH,
             GEMINI_3_7_FLASH,
             GEMINI_3_6_FLASH,
             GEMINI_3_5_FLASH,
-            GEMINI_3_5_FLASH_LITE,
-            GEMINI_3_1_FLASH_LITE,
-            GEMINI_FLASH_LATEST,
-            GEMINI_FLASH_LITE_LATEST
+            GEMINI_3_FLASH_PREVIEW
         )
+
+        val GEMINI_FLASH_LITE = listOf(
+            GEMINI_3_5_FLASH_LITE,
+            GEMINI_3_1_FLASH_LITE
+        )
+
+        val GEMINI_2_SERIES = listOf(
+            GEMINI_2_5_FLASH
+        )
+
+        val INDIVIDUAL_MODELS = DYNAMIC_ALIASES + GEMINI_3_FLASH + GEMINI_FLASH_LITE + GEMINI_2_SERIES
 
         val ALL_AVAILABLE_MODELS = CASCADES + INDIVIDUAL_MODELS
     }

@@ -876,7 +876,7 @@ object OfflineKnowledgeEngine {
             text.contains("good night") ->
                 "Good night, sir. Essential background automation remains on standby."
 
-            text.contains("meaning of life") || text.contains("42") ->
+            text.contains("meaning of life") || text.trim() == "42" || text.contains("what is 42") || text.contains("why 42") ->
                 "According to the Hitchhiker's Guide, the answer is 42. In practice, I believe it is about maximizing human agency through intelligence."
 
             else -> null

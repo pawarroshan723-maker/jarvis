@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -45,16 +46,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Enable lockscreen display and turn screen on for voice/sensor commands
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
+        // Check user preference for lockscreen display
+        val prefs = getSharedPreferences("jarvis_system_prefs", Context.MODE_PRIVATE)
+        val showAboveLockscreen = prefs.getBoolean("key_show_above_lockscreen", true)
+
+        if (showAboveLockscreen) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
         }
 
         setContent {
@@ -133,6 +139,7 @@ fun MainAppContent(viewModel: JarvisViewModel) {
     val isWakeWordLockActive by viewModel.isWakeWordLockActive.collectAsState()
     val currentPlayingTrack by viewModel.currentPlayingTrack.collectAsState()
     val isLocalPlayerActive by viewModel.isLocalPlayerActive.collectAsState()
+    val exhaustedModelList by viewModel.exhaustedModelList.collectAsState()
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -220,7 +227,11 @@ fun MainAppContent(viewModel: JarvisViewModel) {
 
         // Immediate tactile haptic feedback on tapping to engage
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vibratorManager?.defaultVibrator?.vibrate(android.os.VibrationEffect.createOneShot(50, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
                 val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
                 vibrator?.vibrate(android.os.VibrationEffect.createOneShot(50, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
             }
@@ -499,7 +510,9 @@ fun MainAppContent(viewModel: JarvisViewModel) {
                     lastExecutionSummary = lastExecutionSummary,
                     modelTestResult = modelTestResult,
                     isTestingModel = isTestingModel,
-                    onTestModel = { viewModel.testModel(it) }
+                    onTestModel = { viewModel.testModel(it) },
+                    exhaustedModels = exhaustedModelList,
+                    onResetCooldowns = { viewModel.clearModelQuotaCooldowns() }
                 )
             }
         }

@@ -353,11 +353,13 @@ class JarvisSpeechManager(
                         stopListening()
                     }
                 }
-                Intent.ACTION_SCREEN_ON -> {
-                    Log.i(TAG, "Screen turned ON. Mode: ${_micAlwaysOnMode.value}")
+                Intent.ACTION_SCREEN_ON,
+                Intent.ACTION_USER_PRESENT -> {
+                    Log.i(TAG, "Screen interactive / User present (${intent.action}). Mode: ${_micAlwaysOnMode.value}")
                     if (_micAlwaysOnMode.value == MicAlwaysOnMode.SCREEN_OFF_ONLY) {
                         // In screen-off-only mode, save battery while user is interacting on-screen
                         _isScreenOffArmed.value = false
+                        releaseWakeLock()
                         stopListening()
                     } else if (_micAlwaysOnMode.value == MicAlwaysOnMode.ALWAYS_ON_SCREEN_OFF_AND_ON ||
                         _micAlwaysOnMode.value == MicAlwaysOnMode.SCREEN_ON_ONLY
@@ -371,6 +373,68 @@ class JarvisSpeechManager(
                 }
             }
         }
+    }
+
+    private var audioFocusRequest: android.media.AudioFocusRequest? = null
+
+    private fun requestTransientAudioFocusDucking() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                if (audioFocusRequest == null) {
+                    audioFocusRequest = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(
+                            android.media.AudioAttributes.Builder()
+                                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        .setOnAudioFocusChangeListener { /* no-op */ }
+                        .build()
+                }
+                audioFocusRequest?.let { am?.requestAudioFocus(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am?.requestAudioFocus(null, android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error requesting audio focus ducking: ${e.message}")
+        }
+    }
+
+    private fun abandonTransientAudioFocus() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am?.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am?.abandonAudioFocus(null)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error abandoning audio focus: ${e.message}")
+        }
+    }
+
+    private fun duckInternalPlayer(duck: Boolean) {
+        try {
+            val app = context.applicationContext as? com.example.JarvisApplication
+            app?.hardwareController?.audioPlayer?.duckVolume(duck)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error ducking internal player: ${e.message}")
+        }
+    }
+
+    fun isMediaEmergencyCommand(command: String): Boolean {
+        val clean = command.trim().lowercase(Locale.ROOT)
+        return clean == "stop" || clean == "pause" || clean == "थांबवा" || clean == "थांबव" ||
+                clean == "पॉज" || clean == "म्यूट" || clean == "शांत" || clean == "mute" ||
+                clean.contains("गाणं थांबव") || clean.contains("गाणे थांबवा") || clean.contains("गाणी थांबवा") ||
+                clean.contains("गाणं बंद") || clean.contains("गाणे बंद") || clean.contains("म्युझिक बंद") ||
+                clean.contains("संगीत बंद") || clean.contains("गाणे पॉज") || clean.contains("गाणं पॉज") ||
+                clean.contains("stop music") || clean.contains("stop song") || clean.contains("pause music") ||
+                clean.contains("pause song") || clean.contains("stop playback") || clean.contains("thambav") ||
+                clean.contains("gana band") || clean.contains("gana thambav") || clean.contains("आवाज बंद")
     }
 
     fun setLanguage(language: VoiceLanguage) {
@@ -403,11 +467,12 @@ class JarvisSpeechManager(
             initSpeechRecognizer()
             textToSpeech = TextToSpeech(context, this)
 
-            // Register screen state receiver
+            // Register screen state receiver including user unlock
             try {
                 val filter = android.content.IntentFilter().apply {
                     addAction(Intent.ACTION_SCREEN_OFF)
                     addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_USER_PRESENT)
                 }
                 context.registerReceiver(screenStateReceiver, filter)
                 isScreenReceiverRegistered = true
@@ -498,6 +563,8 @@ class JarvisSpeechManager(
                     override fun onStart(utteranceId: String?) {
                         Log.d(TAG, "TTS Utterance onStart: Speaking answer...")
                         isTtsSpeaking = true
+                        requestTransientAudioFocusDucking()
+                        duckInternalPlayer(true)
                         runOnMainThread {
                             cancelProcessingWatchdog()
                             cancelSilenceTimer()
@@ -517,6 +584,8 @@ class JarvisSpeechManager(
                         Log.d(TAG, "TTS Utterance onDone: Finished speaking answer. Cooling down audio buffer before mic resume...")
                         isTtsSpeaking = false
                         ttsAudioCooldownUntil = System.currentTimeMillis() + TTS_AUDIO_COOLDOWN_MILLIS
+                        abandonTransientAudioFocus()
+                        duckInternalPlayer(false)
                         synchronized(recentSpokenUtterances) {
                             val last = recentSpokenUtterances.lastOrNull()
                             if (last != null) {
@@ -538,6 +607,8 @@ class JarvisSpeechManager(
                         Log.w(TAG, "TTS Utterance onError. Cooling down audio buffer...")
                         isTtsSpeaking = false
                         ttsAudioCooldownUntil = System.currentTimeMillis() + TTS_AUDIO_COOLDOWN_MILLIS
+                        abandonTransientAudioFocus()
+                        duckInternalPlayer(false)
                         runOnMainThread {
                             cancelProcessingWatchdog()
                             cancelSilenceTimer()
@@ -809,7 +880,12 @@ class JarvisSpeechManager(
 
             // --- J.A.R.V.I.S. Wake-Word Gatekeeper Lock ---
             var effectiveCommand = finalWords
-            if (_isWakeWordLockActive.value && !_isTemporarilyUnlocked.value) {
+            val isUrgentMedia = isMediaEmergencyCommand(finalWords)
+            if (isUrgentMedia) {
+                // Priority: duck/halt immediately so user command succeeds without acoustic combat
+                duckInternalPlayer(true)
+            }
+            if (_isWakeWordLockActive.value && !_isTemporarilyUnlocked.value && !isUrgentMedia) {
                 val (hasWakeWord, strippedCommand) = extractWakeWordAndCommand(finalWords)
                 if (!hasWakeWord) {
                     Log.i(TAG, "[JarvisLock] Ignored non-wake speech while locked: '$finalWords'")
@@ -975,6 +1051,8 @@ class JarvisSpeechManager(
         if (isTtsReady) {
             textToSpeech?.stop()
             isTtsSpeaking = false
+            abandonTransientAudioFocus()
+            duckInternalPlayer(false)
             ttsAudioCooldownUntil = System.currentTimeMillis() + TTS_AUDIO_COOLDOWN_MILLIS
             if (_speechState.value == SpeechState.SPEAKING) {
                 _speechState.value = SpeechState.IDLE
@@ -989,6 +1067,8 @@ class JarvisSpeechManager(
      */
     fun destroy() {
         isDestroyed = true
+        abandonTransientAudioFocus()
+        duckInternalPlayer(false)
         runOnMainThread {
             try {
                 cancelSilenceTimer()
@@ -1049,6 +1129,7 @@ class JarvisSpeechManager(
         Log.d(TAG, "onBeginningOfSpeech: Catching user words...")
         _speechState.value = SpeechState.LISTENING
         isSpeechActive = true
+        duckInternalPlayer(true)
         voiceActivityDetector.onSpeechDetected(true)
         resetSilenceTimer()
     }
@@ -1226,6 +1307,15 @@ class JarvisSpeechManager(
 
             // Reset 2-second silence countdown every time new speech is caught!
             resetSilenceTimer()
+
+            // If user utters an urgent pause or stop, halt playback immediately without waiting for silence timer
+            if (isMediaEmergencyCommand(partial)) {
+                Log.i(TAG, "[FastMediaHalt] Emergency media command detected in partial speech: '$partial'")
+                try {
+                    val app = context.applicationContext as? com.example.JarvisApplication
+                    app?.hardwareController?.controlMedia(com.example.hardware.MediaControlAction.PAUSE)
+                } catch (ignored: Exception) {}
+            }
         }
     }
 

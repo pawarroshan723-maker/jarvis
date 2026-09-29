@@ -336,7 +336,7 @@ class JarvisAutomationService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("J.A.R.V.I.S. Lockscreen Core")
             .setContentText(contentText)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingOpen)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)

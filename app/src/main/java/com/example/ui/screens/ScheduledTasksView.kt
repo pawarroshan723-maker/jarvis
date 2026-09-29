@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -841,7 +843,7 @@ fun ScheduledTasksView(
                             .height(48.dp)
                     ) {
                         Icon(
-                            imageVector = if (selectedTaskMode == 0) Icons.Default.AutoAwesome else Icons.Default.ScheduleSend,
+                            imageVector = if (selectedTaskMode == 0) Icons.Default.AutoAwesome else Icons.AutoMirrored.Filled.ScheduleSend,
                             contentDescription = null,
                             tint = Color.Black,
                             modifier = Modifier.size(18.dp)
@@ -1222,7 +1224,7 @@ fun ScheduledTaskCard(
                                         onClick = { onSpeak(task.lastResultText) },
                                         modifier = Modifier.size(24.dp)
                                     ) {
-                                        Icon(Icons.Default.VolumeUp, "Speak Result", tint = NeonAmber, modifier = Modifier.size(13.dp))
+                                        Icon(Icons.AutoMirrored.Filled.VolumeUp, "Speak Result", tint = NeonAmber, modifier = Modifier.size(13.dp))
                                     }
                                 }
 
@@ -1344,7 +1346,9 @@ fun EditScheduledTaskDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(

@@ -102,7 +102,9 @@ fun VoiceDiagnosticsDialog(
     lastExecutionSummary: QueryExecutionSummary? = null,
     modelTestResult: com.example.engine.ModelAttemptInfo? = null,
     isTestingModel: Boolean = false,
-    onTestModel: (GeminiModelTier) -> Unit = {}
+    onTestModel: (GeminiModelTier) -> Unit = {},
+    exhaustedModels: List<String> = emptyList(),
+    onResetCooldowns: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showApiKeyEditor by remember { mutableStateOf(false) }
@@ -353,9 +355,9 @@ fun VoiceDiagnosticsDialog(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            // Section 2: Separate Individual Models
+                            // Section 2: Dynamic Aliases & Pinned Models
                             Text(
-                                text = "SEPARATE INDIVIDUAL MODELS (DIRECT)",
+                                text = "DYNAMIC ALIASES (-LATEST)",
                                 color = TextSecondary,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
@@ -368,15 +370,26 @@ fun VoiceDiagnosticsDialog(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                GeminiModelTier.INDIVIDUAL_MODELS.forEach { tier ->
+                                GeminiModelTier.DYNAMIC_ALIASES.forEach { tier ->
                                     val isSelected = selectedModelTier == tier
+                                    val isExhausted = exhaustedModels.contains(tier.modelId)
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isSelected) ArcCyanContainer else SurfaceVariantDark)
+                                            .background(
+                                                when {
+                                                    isSelected -> ArcCyanContainer
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.1f)
+                                                    else -> SurfaceVariantDark
+                                                }
+                                            )
                                             .border(
                                                 1.dp,
-                                                if (isSelected) ArcCyan else BorderCyan.copy(alpha = 0.3f),
+                                                when {
+                                                    isSelected -> ArcCyan
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.5f)
+                                                    else -> BorderCyan.copy(alpha = 0.3f)
+                                                },
                                                 RoundedCornerShape(6.dp)
                                             )
                                             .clickable { onSelectModelTier(tier) }
@@ -385,10 +398,130 @@ fun VoiceDiagnosticsDialog(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = tier.shortLabel,
-                                            color = if (isSelected) ArcCyan else TextSecondary,
+                                            text = if (isExhausted) "${tier.shortLabel} ⚠" else tier.shortLabel,
+                                            color = when {
+                                                isSelected -> ArcCyan
+                                                isExhausted -> NeonAmber
+                                                else -> TextSecondary
+                                            },
                                             fontSize = 9.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontWeight = if (isSelected || isExhausted) FontWeight.Bold else FontWeight.Normal,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "GEMINI 3.X FLASH (PINNED)",
+                                color = TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                GeminiModelTier.GEMINI_3_FLASH.forEach { tier ->
+                                    val isSelected = selectedModelTier == tier
+                                    val isExhausted = exhaustedModels.contains(tier.modelId)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                when {
+                                                    isSelected -> ArcCyanContainer
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.1f)
+                                                    else -> SurfaceVariantDark
+                                                }
+                                            )
+                                            .border(
+                                                1.dp,
+                                                when {
+                                                    isSelected -> ArcCyan
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.5f)
+                                                    else -> BorderCyan.copy(alpha = 0.3f)
+                                                },
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .clickable { onSelectModelTier(tier) }
+                                            .padding(horizontal = 7.dp, vertical = 5.dp)
+                                            .testTag("model_chip_${tier.id}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (isExhausted) "${tier.shortLabel} ⚠" else tier.shortLabel,
+                                            color = when {
+                                                isSelected -> ArcCyan
+                                                isExhausted -> NeonAmber
+                                                else -> TextSecondary
+                                            },
+                                            fontSize = 9.sp,
+                                            fontWeight = if (isSelected || isExhausted) FontWeight.Bold else FontWeight.Normal,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "GEMINI FLASH-LITE & 2.X SERIES",
+                                color = TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                (GeminiModelTier.GEMINI_FLASH_LITE + GeminiModelTier.GEMINI_2_SERIES).forEach { tier ->
+                                    val isSelected = selectedModelTier == tier
+                                    val isExhausted = exhaustedModels.contains(tier.modelId)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                when {
+                                                    isSelected -> ArcCyanContainer
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.1f)
+                                                    else -> SurfaceVariantDark
+                                                }
+                                            )
+                                            .border(
+                                                1.dp,
+                                                when {
+                                                    isSelected -> ArcCyan
+                                                    isExhausted -> NeonAmber.copy(alpha = 0.5f)
+                                                    else -> BorderCyan.copy(alpha = 0.3f)
+                                                },
+                                                RoundedCornerShape(6.dp)
+                                            )
+                                            .clickable { onSelectModelTier(tier) }
+                                            .padding(horizontal = 7.dp, vertical = 5.dp)
+                                            .testTag("model_chip_${tier.id}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (isExhausted) "${tier.shortLabel} ⚠" else tier.shortLabel,
+                                            color = when {
+                                                isSelected -> ArcCyan
+                                                isExhausted -> NeonAmber
+                                                else -> TextSecondary
+                                            },
+                                            fontSize = 9.sp,
+                                            fontWeight = if (isSelected || isExhausted) FontWeight.Bold else FontWeight.Normal,
                                             fontFamily = FontFamily.Monospace
                                         )
                                     }
@@ -457,6 +590,59 @@ fun VoiceDiagnosticsDialog(
                                         color = ArcCyan,
                                         fontFamily = FontFamily.Monospace
                                     )
+                                }
+                            }
+
+                            // Quota Circuit Breaker Banner
+                            if (exhaustedModels.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(NeonAmber.copy(alpha = 0.12f))
+                                        .border(1.dp, NeonAmber.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                        .padding(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "⚡ QUOTA CIRCUIT BREAKER ACTIVE",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = NeonAmber,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "Token limit reached on: ${exhaustedModels.joinToString(", ")}. Cascades automatically bypass these and route to Gemini 3.5 Flash & Flash-Lite.",
+                                                fontSize = 8.sp,
+                                                color = TextSecondary,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(NeonAmber.copy(alpha = 0.25f))
+                                                .border(1.dp, NeonAmber, RoundedCornerShape(4.dp))
+                                                .clickable { onResetCooldowns() }
+                                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(
+                                                text = "RESET",
+                                                fontSize = 8.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = NeonAmber,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
                                 }
                             }
 

@@ -172,17 +172,24 @@
 
         <receiver
             android:name=".system.JarvisCallReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.READ_PHONE_STATE">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
             </intent-filter>
         </receiver>
 
+        <!-- Internal alarm receiver: NOT exported to prevent external apps from triggering tasks -->
         <receiver
             android:name=".system.ScheduledTaskReceiver"
-            android:exported="true">
+            android:exported="false" />
+
+        <!-- System boot receiver: protected by system RECEIVE_BOOT_COMPLETED permission -->
+        <receiver
+            android:name=".system.BootCompletedReceiver"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
             <intent-filter>
-                <action android:name="com.example.jarvis.ACTION_EXECUTE_SCHEDULED_TASK" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />

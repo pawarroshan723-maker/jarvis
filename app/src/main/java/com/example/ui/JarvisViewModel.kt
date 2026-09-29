@@ -112,6 +112,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     val selectedModelTier: StateFlow<com.example.engine.GeminiModelTier> = app.geminiAssistantEngine.selectedModelTier
     val isAutoFallbackEnabled: StateFlow<Boolean> = app.geminiAssistantEngine.isAutoFallbackEnabled
     val lastExecutionSummary: StateFlow<com.example.engine.QueryExecutionSummary?> = app.geminiAssistantEngine.lastExecutionSummary
+    val exhaustedModelList: StateFlow<List<String>> = app.geminiAssistantEngine.exhaustedModelList
+
+    fun clearModelQuotaCooldowns() {
+        app.geminiAssistantEngine.clearAllCooldowns()
+        _modelTestResult.value = null
+    }
 
     private val _modelTestResult = MutableStateFlow<com.example.engine.ModelAttemptInfo?>(null)
     val modelTestResult: StateFlow<com.example.engine.ModelAttemptInfo?> = _modelTestResult.asStateFlow()
@@ -171,6 +177,15 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _showAddRuleDialog = MutableStateFlow(false)
     val showAddRuleDialog: StateFlow<Boolean> = _showAddRuleDialog.asStateFlow()
+
+    private val systemPrefs = app.getSharedPreferences("jarvis_system_prefs", android.content.Context.MODE_PRIVATE)
+    private val _isShowAboveLockscreen = MutableStateFlow(systemPrefs.getBoolean("key_show_above_lockscreen", true))
+    val isShowAboveLockscreen: StateFlow<Boolean> = _isShowAboveLockscreen.asStateFlow()
+
+    fun setShowAboveLockscreen(enabled: Boolean) {
+        _isShowAboveLockscreen.value = enabled
+        systemPrefs.edit().putBoolean("key_show_above_lockscreen", enabled).apply()
+    }
 
     private val _showDiagnosticsDialog = MutableStateFlow(false)
     val showDiagnosticsDialog: StateFlow<Boolean> = _showDiagnosticsDialog.asStateFlow()

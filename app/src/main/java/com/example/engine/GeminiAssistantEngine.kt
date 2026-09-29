@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class GeminiAssistantEngine(private val context: Context? = null) {
@@ -24,6 +25,7 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         private const val KEY_CUSTOM_API_KEY = "custom_gemini_api_key"
         private const val KEY_SELECTED_TIER = "selected_gemini_tier"
         private const val KEY_AUTO_FALLBACK = "auto_fallback_enabled"
+        private const val TAG = "GeminiEngine"
     }
 
     val conversationMemory = ConversationMemory(context)
@@ -44,6 +46,47 @@ class GeminiAssistantEngine(private val context: Context? = null) {
 
     private val _lastExecutionSummary = MutableStateFlow<QueryExecutionSummary?>(null)
     val lastExecutionSummary: StateFlow<QueryExecutionSummary?> = _lastExecutionSummary.asStateFlow()
+
+    // Quota Circuit Breaker: modelId -> expiry timestamp (ms)
+    private val modelCooldowns = ConcurrentHashMap<String, Long>()
+    private val _exhaustedModelList = MutableStateFlow<List<String>>(emptyList())
+    val exhaustedModelList: StateFlow<List<String>> = _exhaustedModelList.asStateFlow()
+
+    fun recordModelQuotaExhausted(modelId: String, durationMinutes: Long = 15) {
+        val expiry = System.currentTimeMillis() + (durationMinutes * 60 * 1000)
+        modelCooldowns[modelId] = expiry
+        // If 3.8 flash reached 25M token quota, dynamic alias gemini-flash-latest also shares this limit
+        if (modelId == "gemini-3.8-flash") {
+            modelCooldowns["gemini-flash-latest"] = expiry
+        } else if (modelId == "gemini-flash-latest") {
+            modelCooldowns["gemini-3.8-flash"] = expiry
+        }
+        updateExhaustedModelList()
+        Log.w(TAG, "Quota circuit breaker triggered for $modelId until $expiry. Cascades will route to alternate models.")
+    }
+
+    fun isModelInCooldown(modelId: String): Boolean {
+        val expiry = modelCooldowns[modelId] ?: return false
+        if (System.currentTimeMillis() < expiry) {
+            return true
+        }
+        modelCooldowns.remove(modelId)
+        updateExhaustedModelList()
+        return false
+    }
+
+    fun clearAllCooldowns() {
+        modelCooldowns.clear()
+        updateExhaustedModelList()
+    }
+
+    private fun updateExhaustedModelList() {
+        val now = System.currentTimeMillis()
+        val active = modelCooldowns.entries
+            .filter { it.value > now }
+            .map { it.key }
+        _exhaustedModelList.value = active
+    }
 
     private fun loadSelectedTier(): GeminiModelTier {
         if (context == null) return GeminiModelTier.AUTO_CASCADE
@@ -94,6 +137,8 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         } else {
             prefs.edit().putString(KEY_CUSTOM_API_KEY, key.trim()).apply()
         }
+        // When user updates API key, clear circuit breaker cooldowns
+        clearAllCooldowns()
     }
 
     fun isCustomApiKeySet(): Boolean {
@@ -174,35 +219,32 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         val selectedTier = _selectedModelTier.value
         val autoFallback = _isAutoFallbackEnabled.value
 
-        // Determine cascade based on selected tier and complexity
-        val modelCascade = when {
+        // Determine base cascade across distinct model quota buckets
+        val baseCascade = when {
             selectedTier == GeminiModelTier.CASCADE_LITE -> listOf(
-                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", highThinking = false, allowTools = true),
+                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
+                ModelConfig("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", highThinking = false, allowTools = true),
                 ModelConfig("gemini-flash-lite-latest", "Gemini Flash-Lite Latest", highThinking = false, allowTools = true),
-                ModelConfig("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", highThinking = false, allowTools = false)
+                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true)
             )
             selectedTier == GeminiModelTier.CASCADE_FLASH -> listOf(
-                ModelConfig("gemini-3.8-flash", "Gemini 3.8 Flash", highThinking = isHardQuestion, allowTools = true),
+                ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = isHardQuestion, allowTools = true),
                 ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = isHardQuestion, allowTools = true),
-                ModelConfig("gemini-3.6-flash", "Gemini 3.6 Flash", highThinking = false, allowTools = true),
-                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true),
-                ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = false, allowTools = true),
-                // Safety fallback to lite if all flagship flash models are 503 overloaded
-                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite (Safety Fallback)", highThinking = false, allowTools = false)
+                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = isHardQuestion, allowTools = true),
+                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
+                ModelConfig("gemini-2.5-flash", "Gemini 2.5 Flash (Safety Fallback)", highThinking = false, allowTools = true)
             )
             selectedTier == GeminiModelTier.AUTO_CASCADE && isHardQuestion -> listOf(
-                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", highThinking = false, allowTools = false),
-                ModelConfig("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", highThinking = false, allowTools = false),
-                ModelConfig("gemini-flash-lite-latest", "Gemini Flash-Lite Latest", highThinking = false, allowTools = false),
-                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = true, allowTools = false),
-                ModelConfig("gemini-3.8-flash", "Gemini 3.8 Flash", highThinking = true, allowTools = false)
+                ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = true, allowTools = true),
+                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = true, allowTools = true),
+                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = true, allowTools = true),
+                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = false)
             )
             selectedTier == GeminiModelTier.AUTO_CASCADE -> listOf(
-                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", highThinking = false, allowTools = true),
-                ModelConfig("gemini-flash-lite-latest", "Gemini Flash-Lite Latest", highThinking = false, allowTools = true),
-                ModelConfig("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", highThinking = false, allowTools = false),
-                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = false, allowTools = true),
-                ModelConfig("gemini-3.8-flash", "Gemini 3.8 Flash", highThinking = false, allowTools = true)
+                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
+                ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = false, allowTools = true),
+                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true),
+                ModelConfig("gemini-2.5-flash", "Gemini 2.5 Flash", highThinking = false, allowTools = true)
             )
             !autoFallback -> listOf(
                 ModelConfig(selectedTier.modelId, selectedTier.shortLabel, highThinking = enableHighThinking, allowTools = true)
@@ -210,24 +252,38 @@ class GeminiAssistantEngine(private val context: Context? = null) {
             else -> {
                 val primary = ModelConfig(selectedTier.modelId, selectedTier.shortLabel, highThinking = enableHighThinking, allowTools = true)
                 val fallbacks = listOf(
-                    ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", highThinking = false, allowTools = true),
+                    ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
+                    ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true),
+                    ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = false, allowTools = true),
                     ModelConfig("gemini-flash-lite-latest", "Gemini Flash-Lite Latest", highThinking = false, allowTools = true),
-                    ModelConfig("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", highThinking = false, allowTools = false),
-                    ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = false, allowTools = false),
-                    ModelConfig("gemini-3.8-flash", "Gemini 3.8 Flash", highThinking = false, allowTools = false)
+                    ModelConfig("gemini-2.5-flash", "Gemini 2.5 Flash", highThinking = false, allowTools = true)
                 ).filter { it.model != selectedTier.modelId }
                 listOf(primary) + fallbacks
             }
         }
 
-        val attempts = mutableListOf<ModelAttemptInfo>()
-        val requestedModelName = modelCascade.first().displayName
+        // Circuit breaker: prioritize models not currently on quota cooldown
+        val modelCascade = if (autoFallback) {
+            baseCascade.sortedBy { if (isModelInCooldown(it.model)) 1 else 0 }
+        } else {
+            baseCascade
+        }
 
-        // Try cascading tiers sequentially on 429 (Rate Limited) or API failures
+        val attempts = mutableListOf<ModelAttemptInfo>()
+        val requestedModelName = baseCascade.first().displayName
+
+        // Try cascading tiers sequentially on 429 (Quota Limit) or API failures
         for (i in modelCascade.indices) {
             val config = modelCascade[i]
             val attemptStart = System.currentTimeMillis()
-            Log.d("GeminiEngine", "Attempting query with model tier [${i + 1}/${modelCascade.size}]: ${config.model} (Hard: $isHardQuestion)")
+
+            // If a model is in cooldown and fallback is enabled, skip unless it's the last option
+            if (isModelInCooldown(config.model) && i < modelCascade.size - 1) {
+                Log.i(TAG, "Skipping ${config.model} (currently in quota cooldown)")
+                continue
+            }
+
+            Log.d(TAG, "Attempting query with model tier [${i + 1}/${modelCascade.size}]: ${config.model} (Hard: $isHardQuestion)")
 
             val result = executeGeminiRequest(
                 model = config.model,
@@ -255,10 +311,12 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                     return@withContext result.text
                 }
                 is ApiResult.RateLimited -> {
-                    val rateLimitMsg = "429 Rate Limit (Free Tier RPM quota exceeded)"
+                    // Activate circuit breaker for this model so future queries skip it immediately
+                    recordModelQuotaExhausted(config.model)
+                    val rateLimitMsg = result.details
                     attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, rateLimitMsg))
-                    Log.w("GeminiEngine", "Model ${config.model} returned 429 Rate Limited. Trying next tier...")
-                    
+                    Log.w(TAG, "Model ${config.model} quota reached. Tripped circuit breaker. Trying next tier...")
+
                     // Check if local offline engine can answer immediately without waiting
                     val offlineKnowledge = OfflineKnowledgeEngine.answerQuery(normalizedQuery, context)
                     if (offlineKnowledge.handled) {
@@ -275,12 +333,12 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                         return@withContext offlineKnowledge.answer
                     }
                     if (i < modelCascade.size - 1) {
-                        delay(250) // Brief backoff before next model tier
+                        delay(150) // Quick backoff before next model tier
                     }
                 }
                 is ApiResult.Error -> {
-                    attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, "HTTP ${result.code}"))
-                    Log.w("GeminiEngine", "Model ${config.model} returned HTTP ${result.code}: ${result.message}")
+                    attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, "HTTP ${result.code}: ${result.message}"))
+                    Log.w(TAG, "Model ${config.model} returned HTTP ${result.code}: ${result.message}")
                     // If tools caused a 400 error, retry this tier without tools first
                     if (config.allowTools && (useSearch || useMaps)) {
                         val retryStart = System.currentTimeMillis()
@@ -311,7 +369,7 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 }
                 is ApiResult.ExceptionError -> {
                     attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, result.exception.message ?: "Exception"))
-                    Log.w("GeminiEngine", "Exception on ${config.model}: ${result.exception.message}")
+                    Log.w(TAG, "Exception on ${config.model}: ${result.exception.message}")
                 }
             }
         }
@@ -406,19 +464,27 @@ class GeminiAssistantEngine(private val context: Context? = null) {
             val requestBody = requestJson.toString().toRequestBody(jsonMediaType)
             val request = Request.Builder()
                 .url(endpoint)
+                .addHeader("x-goog-api-key", apiKey)
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val code = response.code
-            val responseBody = response.body?.string() ?: ""
-
-            if (code == 429) {
-                return ApiResult.RateLimited(responseBody)
+            val (code, responseBody, isSuccessful) = client.newCall(request).execute().use { response ->
+                Triple(response.code, response.body?.string() ?: "", response.isSuccessful)
             }
 
-            if (!response.isSuccessful) {
-                return ApiResult.Error(code, responseBody)
+            val isQuotaExhausted = code == 429 ||
+                    responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                    responseBody.contains("resource_exhausted", ignoreCase = true) ||
+                    responseBody.contains("quota exceeded", ignoreCase = true)
+
+            if (isQuotaExhausted) {
+                val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
+                return ApiResult.RateLimited(cleanMsg)
+            }
+
+            if (!isSuccessful) {
+                val cleanMsg = parseErrorDetails(responseBody, "HTTP $code")
+                return ApiResult.Error(code, cleanMsg)
             }
 
             val jsonResponse = JSONObject(responseBody)
@@ -444,8 +510,31 @@ class GeminiAssistantEngine(private val context: Context? = null) {
 
             ApiResult.Success("I received no textual response from the intelligence core, sir.")
         } catch (e: Exception) {
-            Log.e("GeminiEngine", "Exception during Gemini request ($model)", e)
+            Log.e(TAG, "Exception during Gemini request ($model)", e)
             ApiResult.ExceptionError(e)
+        }
+    }
+
+    private fun parseErrorDetails(rawJson: String, defaultMsg: String): String {
+        return try {
+            val json = JSONObject(rawJson)
+            val err = json.optJSONObject("error")
+            val msg = err?.optString("message")
+            if (!msg.isNullOrBlank()) {
+                if (msg.contains("resource_exhausted", ignoreCase = true) || msg.contains("quota", ignoreCase = true)) {
+                    val limit = "limit: (\\d+)".toRegex().find(msg)?.groupValues?.getOrNull(1)
+                    val model = "model: ([^ :,\"]+)".toRegex().find(msg)?.groupValues?.getOrNull(1)
+                    if (model != null) {
+                        return "Quota exceeded on $model${if (limit != null) " (limit $limit tokens)" else ""}. Routing to alternate tier."
+                    }
+                    return "Token quota exceeded on this model. Routing to alternate tier."
+                }
+                msg.take(120)
+            } else {
+                defaultMsg
+            }
+        } catch (_: Exception) {
+            defaultMsg
         }
     }
 
@@ -466,17 +555,29 @@ class GeminiAssistantEngine(private val context: Context? = null) {
 
         val targetModel = when (tier) {
             GeminiModelTier.CASCADE_LITE -> "gemini-3.5-flash-lite"
-            GeminiModelTier.CASCADE_FLASH -> "gemini-3.7-flash"
+            GeminiModelTier.CASCADE_FLASH -> "gemini-flash-latest"
             GeminiModelTier.AUTO_CASCADE -> "gemini-3.5-flash-lite"
             else -> tier.modelId
         }
+
+        // If known to be in cooldown, immediately notify user
+        if (isModelInCooldown(targetModel)) {
+            return@withContext ModelAttemptInfo(
+                modelId = targetModel,
+                displayName = tier.shortLabel,
+                isSuccess = false,
+                latencyMs = 0,
+                errorMessage = "Quota Exceeded (In Cooldown - Cascades route to Gemini 3.5 Flash & Flash-Lite)"
+            )
+        }
+
         val start = System.currentTimeMillis()
         var result = executePingRequest(targetModel, apiKey)
         var latency = System.currentTimeMillis() - start
 
         // If 503 (High demand) or 429 occurs on single test, retry once with a quick 350ms backoff
         if (result is ApiResult.RateLimited || (result is ApiResult.Error && result.code == 503)) {
-            kotlinx.coroutines.delay(350)
+            delay(350)
             val retryStart = System.currentTimeMillis()
             val retryResult = executePingRequest(targetModel, apiKey)
             if (retryResult is ApiResult.Success) {
@@ -487,18 +588,21 @@ class GeminiAssistantEngine(private val context: Context? = null) {
 
         when (result) {
             is ApiResult.Success -> ModelAttemptInfo(targetModel, tier.shortLabel, true, latency)
-            is ApiResult.RateLimited -> ModelAttemptInfo(
-                targetModel,
-                tier.shortLabel,
-                false,
-                latency,
-                "429 Quota Exceeded (Free key RPM limit on this model. Auto-Cascade will route to high-quota models)"
-            )
+            is ApiResult.RateLimited -> {
+                recordModelQuotaExhausted(targetModel)
+                ModelAttemptInfo(
+                    targetModel,
+                    tier.shortLabel,
+                    false,
+                    latency,
+                    result.details
+                )
+            }
             is ApiResult.Error -> {
                 val msg = when (result.code) {
-                    503 -> "503 High Demand (Google server overloaded on this model. Auto-Cascade routes to Flash-Lite)"
-                    404 -> "404 Not Found (Model ID not active on this key)"
-                    403 -> "403 Forbidden (Check AI Studio key permissions)"
+                    503 -> "503 High Demand (Google server overloaded. Auto-Cascade routes to Flash-Lite)"
+                    404 -> "404 Not Found (Model endpoint '$targetModel' not found on API v1beta)"
+                    403 -> "403 Forbidden (Check AI Studio API Key permissions / Enable Generative Language API)"
                     else -> "HTTP ${result.code}: ${result.message.take(70)}"
                 }
                 ModelAttemptInfo(targetModel, tier.shortLabel, false, latency, msg)
@@ -539,18 +643,26 @@ class GeminiAssistantEngine(private val context: Context? = null) {
             val requestBody = requestJson.toString().toRequestBody(jsonMediaType)
             val request = Request.Builder()
                 .url(endpoint)
+                .addHeader("x-goog-api-key", apiKey)
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val code = response.code
-            val responseBody = response.body?.string() ?: ""
-
-            if (code == 429) {
-                return ApiResult.RateLimited(responseBody)
+            val (code, responseBody, isSuccessful) = client.newCall(request).execute().use { response ->
+                Triple(response.code, response.body?.string() ?: "", response.isSuccessful)
             }
-            if (!response.isSuccessful) {
-                return ApiResult.Error(code, responseBody)
+
+            val isQuotaExhausted = code == 429 ||
+                    responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                    responseBody.contains("resource_exhausted", ignoreCase = true) ||
+                    responseBody.contains("quota exceeded", ignoreCase = true)
+
+            if (isQuotaExhausted) {
+                val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
+                return ApiResult.RateLimited(cleanMsg)
+            }
+            if (!isSuccessful) {
+                val cleanMsg = parseErrorDetails(responseBody, "HTTP $code")
+                return ApiResult.Error(code, cleanMsg)
             }
             ApiResult.Success("OK")
         } catch (e: Exception) {

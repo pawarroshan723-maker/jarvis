@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Message
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.OutlinedTextField
@@ -671,7 +673,7 @@ fun CallAndSmsView(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.Message,
+                            imageVector = Icons.AutoMirrored.Filled.Message,
                             contentDescription = "SMS",
                             tint = NeonAmber,
                             modifier = Modifier.size(20.dp)
@@ -760,7 +762,7 @@ fun CallAndSmsView(
                             .testTag("send_sms_btn")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Send,
+                            imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
@@ -1318,7 +1320,7 @@ fun ContactsManagerView(
                                         .background(NeonAmber.copy(alpha = 0.15f), CircleShape)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Message,
+                                        imageVector = Icons.AutoMirrored.Filled.Message,
                                         contentDescription = "SMS",
                                         tint = NeonAmber,
                                         modifier = Modifier.size(18.dp)
