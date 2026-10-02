@@ -25,12 +25,25 @@ enum class GeminiModelTier(
         description = "Cascades across flagship Flash models (Gemini Flash Latest ➔ Gemini 3.8 Flash ➔ Gemini 3.7 Flash ➔ Gemini 3.5 Flash ➔ Gemini 2.5 Flash) for maximum intelligence.",
         isCascade = true
     ),
+    CASCADE_PRO(
+        id = "cascade_pro",
+        shortLabel = "💎 Cascade Pro (Ultimate Intelligence & STEM)",
+        modelId = "cascade_pro",
+        description = "Cascades from Gemini 3.1 Pro Preview for complex STEM/reasoning/coding down through Gemini Flash Latest & 3.5 Flash.",
+        isCascade = true
+    ),
     AUTO_CASCADE(
         id = "auto",
         shortLabel = "⚡ Auto Cascade (Balanced)",
         modelId = "auto_cascade",
-        description = "Balanced intelligent routing across Flash & Flash-Lite models based on query complexity.",
+        description = "Balanced intelligent routing across Flash, Pro & Flash-Lite models based on query complexity.",
         isCascade = true
+    ),
+    GEMINI_3_1_PRO(
+        id = "3_1_pro",
+        shortLabel = "Gemini 3.1 Pro",
+        modelId = "gemini-3.1-pro-preview",
+        description = "Flagship advanced reasoning, coding, math and complex knowledge model"
     ),
     GEMINI_FLASH_LATEST(
         id = "flash_latest",
@@ -97,7 +110,12 @@ enum class GeminiModelTier(
         val CASCADES = listOf(
             CASCADE_LITE,
             CASCADE_FLASH,
+            CASCADE_PRO,
             AUTO_CASCADE
+        )
+
+        val PRO_MODELS = listOf(
+            GEMINI_3_1_PRO
         )
 
         val DYNAMIC_ALIASES = listOf(
@@ -122,7 +140,7 @@ enum class GeminiModelTier(
             GEMINI_2_5_FLASH
         )
 
-        val INDIVIDUAL_MODELS = DYNAMIC_ALIASES + GEMINI_3_FLASH + GEMINI_FLASH_LITE + GEMINI_2_SERIES
+        val INDIVIDUAL_MODELS = PRO_MODELS + DYNAMIC_ALIASES + GEMINI_3_FLASH + GEMINI_FLASH_LITE + GEMINI_2_SERIES
 
         val ALL_AVAILABLE_MODELS = CASCADES + INDIVIDUAL_MODELS
     }

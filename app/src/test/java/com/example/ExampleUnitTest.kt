@@ -24,7 +24,11 @@ class ExampleUnitTest {
         val tiers = com.example.engine.GeminiModelTier.ALL_AVAILABLE_MODELS
         assertTrue(tiers.any { it.modelId == "cascade_lite" })
         assertTrue(tiers.any { it.modelId == "cascade_flash" })
+        assertTrue(tiers.any { it.modelId == "cascade_pro" })
         assertTrue(tiers.any { it.modelId == "auto_cascade" })
+
+        // Flagship Pro Models
+        assertTrue(tiers.any { it.modelId == "gemini-3.1-pro-preview" })
 
         // Dynamic Aliases
         assertTrue(tiers.any { it.modelId == "gemini-flash-latest" })
@@ -44,8 +48,8 @@ class ExampleUnitTest {
         // Gemini 2.x Series
         assertTrue(tiers.any { it.modelId == "gemini-2.5-flash" })
 
-        assertEquals(3, com.example.engine.GeminiModelTier.CASCADES.size)
-        assertEquals(10, com.example.engine.GeminiModelTier.INDIVIDUAL_MODELS.size)
+        assertEquals(4, com.example.engine.GeminiModelTier.CASCADES.size)
+        assertEquals(11, com.example.engine.GeminiModelTier.INDIVIDUAL_MODELS.size)
 
         // Strictly verify NO deprecated 1.5 or 2.0 models exist
         assertFalse(tiers.any { it.modelId.contains("2.0") })
@@ -341,7 +345,7 @@ class ExampleUnitTest {
         assertTrue(enPercent.contains("80 percent"))
 
         val mrPercent = com.example.voice.MarathiTtsManager.normalizeTextForSpeech("बॅटरी 80%", isMarathi = true)
-        assertTrue(mrPercent.contains("80 टक्के"))
+        assertTrue(mrPercent.contains("ऐंशी टक्के"))
 
         // Colons in status messages should be converted to commas
         val statusText = com.example.voice.MarathiTtsManager.normalizeTextForSpeech("System status: Battery is OK", isMarathi = false)
@@ -405,6 +409,30 @@ class ExampleUnitTest {
         val (wake7, cmd7) = speechManager.extractWakeWordAndCommand("turn on flashlight")
         assertFalse(wake7)
         assertEquals("turn on flashlight", cmd7)
+
+        // Wake words with leading comma/punctuation
+        val (wake8, cmd8) = speechManager.extractWakeWordAndCommand("Hey, Jarvis play music")
+        assertTrue(wake8)
+        assertEquals("play music", cmd8)
+
+        val (wake9, cmd9) = speechManager.extractWakeWordAndCommand("Jarvis, what's the time?")
+        assertTrue(wake9)
+        assertEquals("what's the time?", cmd9)
+    }
+
+    @Test
+    fun verifyConversationMemoryWeatherHomophoneGuard() {
+        val memory = com.example.engine.ConversationMemory()
+        // Non-weather general questions should NOT be rewritten
+        val q1 = memory.normalizeAndEnrichQuery("Tell me whether Python is good for beginners")
+        assertEquals("Tell me whether Python is good for beginners", q1)
+
+        val q2 = memory.normalizeAndEnrichQuery("I wonder whether to go in the morning")
+        assertEquals("I wonder whether to go in the morning", q2)
+
+        // Actual weather questions should be normalized
+        val q3 = memory.normalizeAndEnrichQuery("whether in Pune today")
+        assertTrue(q3.contains("weather"))
     }
 
     @Test
@@ -433,5 +461,110 @@ class ExampleUnitTest {
         assertFalse(engine.isModelInCooldown("gemini-3.8-flash"))
         assertFalse(engine.isModelInCooldown("gemini-flash-latest"))
         assertTrue(engine.exhaustedModelList.value.isEmpty())
+    }
+
+    @Test
+    fun verifyMarathiNumericSpeechAndDisplayHandling() {
+        // 1. 69 in Marathi is एकोनसत्तर (NEVER Hindi unhattar)
+        assertEquals("एकोनसत्तर", com.example.voice.MarathiTtsManager.numberToMarathiWords(69))
+        assertEquals("शंभर", com.example.voice.MarathiTtsManager.numberToMarathiWords(100))
+        assertEquals("पन्नास", com.example.voice.MarathiTtsManager.numberToMarathiWords(50))
+        assertEquals("वीस", com.example.voice.MarathiTtsManager.numberToMarathiWords(20))
+
+        // 2. English number words converted to authentic Marathi words
+        val mrSixtyNine = com.example.voice.MarathiTtsManager.convertEnglishNumberWordsToMarathi("sixty nine")
+        assertEquals("एकोनसत्तर", mrSixtyNine)
+
+        val mrSixtyNinePercent = com.example.voice.MarathiTtsManager.convertEnglishNumberWordsToMarathi("sixty nine percent")
+        assertEquals("एकोनसत्तर टक्के", mrSixtyNinePercent)
+
+        // 3. Speech normalization converts 69 directly to Marathi words so TTS never pronounces it in Hindi
+        val normSpeech1 = com.example.voice.MarathiTtsManager.normalizeTextForSpeech("बॅटरी 69% आहे", isMarathi = true)
+        assertTrue(normSpeech1.contains("एकोनसत्तर टक्के"))
+        assertFalse(normSpeech1.contains("69"))
+
+        val normSpeech2 = com.example.voice.MarathiTtsManager.normalizeTextForSpeech("आवाज 69 करा", isMarathi = true)
+        assertTrue(normSpeech2.contains("एकोनसत्तर"))
+        assertFalse(normSpeech2.contains("69"))
+
+        // 4. Screen display formatting converts raw English numeric words like "69" or "sixty nine" to Marathi
+        val display1 = com.example.voice.MarathiTtsManager.formatRecognizedSpeechForDisplay("69", isMarathi = true)
+        assertEquals("६९ (एकोनसत्तर)", display1)
+
+        val display2 = com.example.voice.MarathiTtsManager.formatRecognizedSpeechForDisplay("sixty nine", isMarathi = true)
+        assertEquals("६९ (एकोनसत्तर)", display2)
+
+        val display3 = com.example.voice.MarathiTtsManager.formatRecognizedSpeechForDisplay("आवाज 69 करा", isMarathi = true)
+        assertEquals("आवाज ६९ करा", display3)
+
+        // 5. OfflineKnowledgeEngine number inquiry: 69 in Marathi
+        val kResult1 = com.example.engine.OfflineKnowledgeEngine.answerQuery("what is 69 in marathi")
+        assertTrue(kResult1.handled)
+        assertTrue(kResult1.answer.contains("एकोनसत्तर"))
+
+        val kResult2 = com.example.engine.OfflineKnowledgeEngine.answerQuery("69 ला मराठीत काय म्हणतात")
+        assertTrue(kResult2.handled)
+        assertTrue(kResult2.answer.contains("एकोनसत्तर"))
+
+        val kResult3 = com.example.engine.OfflineKnowledgeEngine.answerQuery("६९")
+        assertTrue(kResult3.handled)
+        assertTrue(kResult3.answer.contains("एकोनसत्तर"))
+    }
+
+    @Test
+    fun verifyFemaleVoiceDetection() {
+        val locale = java.util.Locale.forLanguageTag("mr-IN")
+        val voiceMrFemale = android.speech.tts.Voice(
+            "mr-in-x-mrf-local",
+            locale,
+            android.speech.tts.Voice.QUALITY_NORMAL,
+            android.speech.tts.Voice.LATENCY_NORMAL,
+            false,
+            setOf("female")
+        )
+        val voiceMrMale = android.speech.tts.Voice(
+            "mr-in-x-mrm-local",
+            locale,
+            android.speech.tts.Voice.QUALITY_NORMAL,
+            android.speech.tts.Voice.LATENCY_NORMAL,
+            false,
+            setOf("male")
+        )
+        val voiceEnFemale = android.speech.tts.Voice(
+            "en-in-x-enc-local",
+            java.util.Locale.forLanguageTag("en-IN"),
+            android.speech.tts.Voice.QUALITY_NORMAL,
+            android.speech.tts.Voice.LATENCY_NORMAL,
+            false,
+            setOf("female")
+        )
+
+        assertTrue(com.example.voice.MarathiTtsManager.isExplicitFemaleVoice(voiceMrFemale))
+        assertFalse(com.example.voice.MarathiTtsManager.isExplicitMaleVoice(voiceMrFemale))
+
+        assertTrue(com.example.voice.MarathiTtsManager.isExplicitMaleVoice(voiceMrMale))
+        assertFalse(com.example.voice.MarathiTtsManager.isExplicitFemaleVoice(voiceMrMale))
+
+        assertTrue(com.example.voice.MarathiTtsManager.isExplicitFemaleVoice(voiceEnFemale))
+        assertFalse(com.example.voice.MarathiTtsManager.isExplicitMaleVoice(voiceEnFemale))
+    }
+
+    @Test
+    fun verifyEnglishSmsRoutingInMarathiLanguageMode() {
+        // When Marathi language is selected, but incoming SMS is in English:
+        // "Message received from Dad: Please buy milk" contains NO Devanagari and NO Marathi markers.
+        // It must NOT use Marathi voice mode (which causes distorted Russian-sounding English).
+        val englishSms = "Message received from Dad: Please buy milk and eggs"
+        val hasDevanagari = com.example.voice.MarathiTtsManager.isDevanagari(englishSms)
+        val hasMarathiMarker = com.example.voice.MarathiTtsManager.isMarathiPhrase(englishSms)
+        val isPureEnglish = englishSms.any { it in 'a'..'z' || it in 'A'..'Z' } && !hasDevanagari && !hasMarathiMarker
+
+        assertFalse(hasDevanagari)
+        assertFalse(hasMarathiMarker)
+        assertTrue(isPureEnglish)
+
+        // Conversely, a Marathi message must trigger Devanagari mode
+        val marathiSms = "घरी कधी येणार?"
+        assertTrue(com.example.voice.MarathiTtsManager.isDevanagari(marathiSms))
     }
 }

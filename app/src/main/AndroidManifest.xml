@@ -160,6 +160,21 @@
                 android:value="Real-time environmental sensor automation and hands-free voice trigger service" />
         </service>
 
+        <!-- Full Device Control Accessibility Service -->
+        <service
+            android:name=".accessibility.JarvisAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/accessibility_service_label">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/jarvis_accessibility_service_config" />
+        </service>
+
         <!-- Automatic SMS & Call Telephony Broadcast Receivers -->
         <receiver
             android:name=".system.JarvisSmsReceiver"

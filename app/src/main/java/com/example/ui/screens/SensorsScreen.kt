@@ -357,26 +357,35 @@ fun SensorCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(SurfaceDark)
-            .border(1.dp, BorderCyan, RoundedCornerShape(12.dp))
+            .border(1.dp, BorderCyan.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 10.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                tint = ArcCyan,
-                modifier = Modifier.size(16.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(SurfaceVariantDark)
+                    .border(1.dp, BorderCyan.copy(alpha = 0.4f), RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = ArcCyan,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = title,
                 color = ArcCyan,
-                fontSize = 10.sp,
+                fontSize = 10.5.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
+                letterSpacing = 0.8.sp,
                 fontFamily = FontFamily.Monospace
             )
         }
@@ -386,26 +395,36 @@ fun SensorCard(
 
 @Composable
 fun VectorAxisRow(label: String, value: Float) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            color = TextMuted,
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = String.format("%.2f m/s²", value),
-            color = TextPrimary,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
+    val normalized = ((value + 15f) / 30f).coerceIn(0f, 1f)
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                color = TextMuted,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = String.format(java.util.Locale.ROOT, "%.2f m/s²", value),
+                color = if (kotlin.math.abs(value) > 9.0f) ArcCyan else TextPrimary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+        Spacer(modifier = Modifier.height(3.dp))
+        LinearProgressIndicator(
+            progress = { normalized },
+            color = if (kotlin.math.abs(value) > 9.0f) ArcCyan else NeonAmber,
+            trackColor = SurfaceVariantDark,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
         )
     }
 }

@@ -9,6 +9,8 @@ import com.example.data.JarvisRepository
 import com.example.hardware.HardwareController
 import com.example.sensor.SensorHub
 import com.example.voice.JarvisSpeechManager
+import com.example.voice.MarathiTtsManager
+import com.example.voice.VoiceLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -169,10 +171,19 @@ class AutoCallSmsManager(
             )
 
             if (_config.value.isAutoAnnounceCallsEnabled) {
-                val announceText = if (contactName.isNotBlank()) {
-                    "Incoming call from $contactName, sir."
+                val isMr = speechManager.selectedLanguage.value == VoiceLanguage.MARATHI
+                val announceText = if (isMr) {
+                    if (contactName.isNotBlank()) {
+                        "$contactName यांचा फोन येत आहे."
+                    } else {
+                        "${formatSpokenNumber(number)} कडून फोन येत आहे."
+                    }
                 } else {
-                    "Incoming call from ${formatSpokenNumber(number)}, sir."
+                    if (contactName.isNotBlank()) {
+                        "Incoming call from $contactName, sir."
+                    } else {
+                        "Incoming call from ${formatSpokenNumber(number)}, sir."
+                    }
                 }
                 speechManager.speak(announceText)
             }
@@ -278,8 +289,22 @@ class AutoCallSmsManager(
 
             // Auto-Read SMS Aloud via Jarvis Voice
             if (_config.value.isAutoReadSmsEnabled) {
-                val displayName = contactName.ifBlank { "an unknown contact" }
-                speechManager.speak("Message received from $displayName: $messageBody")
+                val isMr = speechManager.selectedLanguage.value == VoiceLanguage.MARATHI
+                val isMsgMarathi = MarathiTtsManager.isDevanagari(messageBody) || MarathiTtsManager.isMarathiPhrase(messageBody)
+
+                val textToSpeak = if (isMr && isMsgMarathi) {
+                    val displayName = contactName.ifBlank { "अनोळखी नंबर" }
+                    "$displayName कडून संदेश आला आहे: $messageBody"
+                } else if (isMr && !isMsgMarathi) {
+                    // Marathi language selected, but message itself is English!
+                    // Speak purely in English so it NEVER sounds like distorted Russian English!
+                    val displayName = contactName.ifBlank { "unknown contact" }
+                    "Message received from $displayName: $messageBody"
+                } else {
+                    val displayName = contactName.ifBlank { "an unknown contact" }
+                    "Message received from $displayName: $messageBody"
+                }
+                speechManager.speak(textToSpeak)
             }
 
             // Automatic SMS Auto-Responder

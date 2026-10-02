@@ -13,6 +13,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import com.example.voice.MarathiTtsManager
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
@@ -61,6 +62,12 @@ object OfflineKnowledgeEngine {
         val quoteResult = tryEvaluateQuote(normalized)
         if (quoteResult != null) {
             return KnowledgeResult(true, quoteResult)
+        }
+
+        // 2b. Marathi / English Number Translation & Pronunciation (e.g. "what is 69 in marathi", "६९ ला काय म्हणतात", "६९", "sixty nine")
+        val numberResult = tryEvaluateNumberQuery(trimmed)
+        if (numberResult != null) {
+            return KnowledgeResult(true, numberResult)
         }
 
         // 3. Fast High-Pro Math Evaluator (Parentheses, Chained Operators, Scientific)
@@ -390,8 +397,8 @@ object OfflineKnowledgeEngine {
             return "$num चा घन ${formatNumber(result)} आहे, सर."
         }
 
-        // 3j. Power e.g. "2 to the power of 8" or "2 power 8"
-        val powerRegex = Regex("""(\d+(?:\.\d+)?)\s*(?:to the power of|power of|\^|चा घात|cha ghat)\s*(\d+(?:\.\d+)?)""")
+        // 3j. Power e.g. "2 to the power of 8" or "2 power 8" or "2 चा घात 8"
+        val powerRegex = Regex("""^(?:what is\s+)?(\d+(?:\.\d+)?)\s*(?:to the power of|power of|चा घात|cha ghat)\s*(\d+(?:\.\d+)?)$""")
         val powerMatch = powerRegex.find(clean)
         if (powerMatch != null) {
             val base = powerMatch.groupValues[1].toDoubleOrNull() ?: return null
@@ -401,15 +408,18 @@ object OfflineKnowledgeEngine {
             else "$base to the power of $exp equals ${formatNumber(result)}, sir."
         }
 
-        // 3k. Multi-Step Expression Evaluator (e.g. "10 + 20 * 5", "(50 + 20) / 2", "100 - 45 + 12")
+        // 3k. Multi-Step Expression Evaluator (e.g. "10 + 20 * 5", "(50 + 20) / 2", "100 - 45 + 12", "2 ^ 8")
         val exprClean = clean.replace("गुणिले", "*")
             .replace("gunile", "*")
             .replace("times", "*")
             .replace("multiplied by", "*")
+            .replace("×", "*")
+            .replace("✕", "*")
             .replace("x", "*")
             .replace("भागिले", "/")
             .replace("bhagile", "/")
             .replace("divided by", "/")
+            .replace("÷", "/")
             .replace("अधिक", "+")
             .replace("adhik", "+")
             .replace("plus", "+")
@@ -418,7 +428,7 @@ object OfflineKnowledgeEngine {
             .replace("minus", "-")
             .trim()
 
-        if (exprClean.matches(Regex("""^[0-9\.\+\-\*\/\(\)\s]+$""")) && exprClean.any { it in "+-*/" }) {
+        if (exprClean.matches(Regex("""^[0-9\.\+\-\*\/\^\(\)\s]+$""")) && exprClean.any { it in "+-*/^" }) {
             try {
                 val evalResult = evaluateInfix(exprClean)
                 if (evalResult != null) {
@@ -437,7 +447,7 @@ object OfflineKnowledgeEngine {
     }
 
     /**
-     * Fast Recursive Descent Expression Parser for multi-step arithmetic
+     * Fast Recursive Descent Expression Parser for multi-step arithmetic with BODMAS/PEMDAS & Power exponentiation
      */
     private fun evaluateInfix(expr: String): Double? {
         val sanitized = expr.replace(" ", "")
@@ -476,14 +486,24 @@ object OfflineKnowledgeEngine {
             return text.substring(start, pos).toDoubleOrNull() ?: 0.0
         }
 
-        private fun parseTerm(): Double {
+        private fun parsePower(): Double {
             var v = parseFactor()
+            while (peek() == '^') {
+                get()
+                val exp = parsePower() // Right-associative exponentiation
+                v = v.pow(exp)
+            }
+            return v
+        }
+
+        private fun parseTerm(): Double {
+            var v = parsePower()
             while (true) {
                 when (peek()) {
-                    '*' -> { get(); v *= parseFactor() }
+                    '*' -> { get(); v *= parsePower() }
                     '/' -> {
                         get()
-                        val denom = parseFactor()
+                        val denom = parsePower()
                         if (denom == 0.0) return Double.NaN
                         v /= denom
                     }
@@ -637,6 +657,25 @@ object OfflineKnowledgeEngine {
     // ==========================================
 
     private fun lookupOfflineFact(text: String, context: Context? = null): String? {
+        val isMarathi = text.any { it in '\u0900'..'\u097F' } ||
+                text.contains("marathi") || text.contains("मराठी") || text.contains("म्हणतात") || text.contains("म्हणजे")
+
+        // 0. Direct Number Translation / Pronunciation (e.g. "69", "६९", "69 in marathi", "what is 69 in marathi", "69 ला काय म्हणतात")
+        val numberQueryRegex = Regex("""^(?:what\s+is\s+|tell\s+me\s+)?(?:number\s+|संख्या\s+|नंबर\s+)?(\d+|[०-९]+)(?:\s+(?:in\s+marathi|म्हणजे\s+काय|ला\s+मराठीत\s+काय\s+म्हणतात|ला\s+काय\s+म्हणतात|ला\s+काय\s+बोलतात|मराठीत\s+सांगा|मराठीत))?\??$""")
+        val numMatch = numberQueryRegex.find(text.trim())
+        if (numMatch != null) {
+            val numLong = com.example.voice.MarathiTtsManager.parseIndicOrAsciiNumber(numMatch.groupValues[1])
+            if (numLong != null) {
+                val mrWord = com.example.voice.MarathiTtsManager.numberToMarathiWords(numLong)
+                val devDigits = com.example.voice.MarathiTtsManager.digitsToDevanagari(numLong.toString())
+                return if (isMarathi) {
+                    "संख्या $devDigits ($numLong) ला मराठीत '$mrWord' म्हणतात, सर."
+                } else {
+                    "Number $numLong in Marathi is called '$mrWord' ($devDigits), sir."
+                }
+            }
+        }
+
         // Fast direct exact pattern matchers
         return when {
             // TTS Voice Setup Shortcut
@@ -889,5 +928,82 @@ object OfflineKnowledgeEngine {
         } else {
             String.format(Locale.ROOT, "%.2f", num)
         }
+    }
+
+    /**
+     * Handles bilingual number inquiries, pronunciations, and conversions.
+     * Guarantees numbers like 69 ("sixty nine", "६९") are explained and pronounced
+     * in authentic Marathi ('एकोनसत्तर') and NEVER in Hindi ('unhattar').
+     */
+    private fun tryEvaluateNumberQuery(query: String): String? {
+        val trimmed = query.trim()
+        val lower = trimmed.lowercase(Locale.ROOT)
+
+        // 1. Direct standalone numeric check: ASCII digits (e.g. "69", "100")
+        val standaloneAscii = trimmed.toLongOrNull()
+        if (standaloneAscii != null && standaloneAscii in 0..10000000000L) {
+            val mrWord = MarathiTtsManager.numberToMarathiWords(standaloneAscii)
+            val devDigits = MarathiTtsManager.digitsToDevanagari(standaloneAscii.toString())
+            return "संख्या $devDigits ($standaloneAscii) ला मराठीत '$mrWord' म्हणतात, सर."
+        }
+
+        // 2. Direct standalone numeric check: Devanagari digits (e.g. "६९", "१००")
+        if (trimmed.matches(Regex("""^[०-९]+$"""))) {
+            val devNum = MarathiTtsManager.parseIndicOrAsciiNumber(trimmed)
+            if (devNum != null) {
+                val mrWord = MarathiTtsManager.numberToMarathiWords(devNum)
+                return "संख्या $trimmed ($devNum) ला मराठीत '$mrWord' म्हणतात, सर."
+            }
+        }
+
+        // 3. Standalone English number words: e.g. "sixty nine", "fifty five", "hundred"
+        val isEnglishNumberWord = lower.startsWith("twenty") || lower.startsWith("thirty") ||
+                lower.startsWith("forty") || lower.startsWith("fifty") || lower.startsWith("sixty") ||
+                lower.startsWith("seventy") || lower.startsWith("eighty") || lower.startsWith("ninety") ||
+                lower.startsWith("hundred") || lower == "zero" || lower == "one" || lower == "two" ||
+                lower == "three" || lower == "four" || lower == "five" || lower == "six" || lower == "seven" ||
+                lower == "eight" || lower == "nine" || lower == "ten" || lower == "eleven" || lower == "twelve" ||
+                lower == "thirteen" || lower == "fourteen" || lower == "fifteen" || lower == "sixteen" ||
+                lower == "seventeen" || lower == "eighteen" || lower == "nineteen" || lower.startsWith("number ")
+
+        val convertedDigits = MarathiTtsManager.convertEnglishNumberWordsToDigits(lower).replace("number", "").trim()
+        val parsedEnglishLong = convertedDigits.toLongOrNull()
+        if (isEnglishNumberWord && parsedEnglishLong != null) {
+            val mrWord = MarathiTtsManager.numberToMarathiWords(parsedEnglishLong)
+            val devDigits = MarathiTtsManager.digitsToDevanagari(parsedEnglishLong.toString())
+            return "संख्या $devDigits ($parsedEnglishLong) ला मराठीत '$mrWord' म्हणतात, सर."
+        }
+
+        // 4. Number translation questions:
+        // "what is 69 in marathi", "69 in marathi", "69 ला मराठीत काय म्हणतात", "६९ ला काय म्हणतात", "६९ म्हणजे काय"
+        val isNumberQueryPhrase = lower.contains("in marathi") ||
+                lower.contains("मराठीत") ||
+                lower.contains("काय म्हणतात") ||
+                lower.contains("म्हणजे काय") ||
+                lower.contains("उच्चार काय") ||
+                lower.contains("pronounce") ||
+                lower.contains("how to say") ||
+                lower.contains("ला काय")
+
+        if (isNumberQueryPhrase) {
+            // Find ASCII or Devanagari digits in the query
+            val asciiMatch = Regex("""\b(\d+)\b""").find(trimmed)
+            val devMatch = Regex("""([०-९]+)""").find(trimmed)
+
+            val targetNum: Long? = when {
+                asciiMatch != null -> asciiMatch.groupValues[1].toLongOrNull()
+                devMatch != null -> MarathiTtsManager.parseIndicOrAsciiNumber(devMatch.groupValues[1])
+                parsedEnglishLong != null -> parsedEnglishLong
+                else -> null
+            }
+
+            if (targetNum != null) {
+                val mrWord = MarathiTtsManager.numberToMarathiWords(targetNum)
+                val devDigits = MarathiTtsManager.digitsToDevanagari(targetNum.toString())
+                return "संख्या $devDigits ($targetNum) ला मराठीत '$mrWord' म्हणतात, सर."
+            }
+        }
+
+        return null
     }
 }

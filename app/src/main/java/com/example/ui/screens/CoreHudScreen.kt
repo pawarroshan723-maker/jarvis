@@ -84,6 +84,7 @@ import com.example.ui.theme.TextSecondary
 import com.example.voice.MicAlwaysOnMode
 import com.example.voice.SpeechState
 import com.example.voice.VoiceLanguage
+import java.util.Locale
 
 /**
  * Optimized CoreHudScreen:
@@ -133,6 +134,21 @@ fun CoreHudScreen(
     isAutoFallbackEnabled: Boolean = true,
     onToggleAutoFallback: (Boolean) -> Unit = {},
     lastExecutionSummary: QueryExecutionSummary? = null,
+    speechRate: Float = 1.0f,
+    onSetSpeechRate: (Float) -> Unit = {},
+    speechPitch: Float = 1.20f,
+    onSetSpeechPitch: (Float) -> Unit = {},
+    micSensitivity: Float = 1.0f,
+    onSetMicSensitivity: (Float) -> Unit = {},
+    noiseGateThresholdDb: Float = 3.0f,
+    onSetNoiseGateThresholdDb: (Float, Boolean) -> Unit = { _, _ -> },
+    isManualNoiseGate: Boolean = false,
+    onSetNoiseGateMode: (Boolean) -> Unit = {},
+    liveSnrDb: Float = 0f,
+    effectiveGateThresholdDb: Float = 3.0f,
+    isNoiseGateOpen: Boolean = false,
+    dspHardwareAudit: com.example.voice.DspHardwareAudit? = null,
+    onOpenCommandsHelp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var textInput by remember { mutableStateOf("") }
@@ -241,17 +257,29 @@ fun CoreHudScreen(
                                 fontSize = 9.sp,
                                 fontFamily = FontFamily.Monospace
                             )
+                            val dspColor = when {
+                                dspHardwareAudit?.isActualHardware == true -> NeonGreen
+                                dspHardwareAudit?.isSimulator == true -> NeonAmber
+                                else -> ArcCyan
+                            }
+                            val dspText = if (isVoiceActive) {
+                                "VOCAL ${(humanVoiceConfidence * 100).toInt()}%"
+                            } else {
+                                dspHardwareAudit?.badgeLabel ?: "DSP ACTIVE"
+                            }
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(ObsidianDark)
-                                    .border(1.dp, NeonGreen.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                    .border(1.dp, dspColor.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                    .clickable { onOpenDiagnostics() }
                                     .padding(horizontal = 5.dp, vertical = 2.dp)
+                                    .testTag("hud_dsp_badge")
                             ) {
                                 Text(
-                                    text = if (isVoiceActive) "VOCAL ${(humanVoiceConfidence * 100).toInt()}%" else "DSP ACTIVE",
-                                    color = NeonGreen,
-                                    fontSize = 8.5.sp,
+                                    text = dspText,
+                                    color = dspColor,
+                                    fontSize = 8.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
                                 )
@@ -575,6 +603,25 @@ fun CoreHudScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // HELP & COMMAND LIST ACCESSIBILITY BUTTON
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(ArcCyanContainer)
+                                    .border(1.dp, ArcCyan, RoundedCornerShape(4.dp))
+                                    .clickable { onOpenCommandsHelp() }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("console_help_commands_button")
+                            ) {
+                                Text(
+                                    text = "CMD ?",
+                                    color = ArcCyan,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
                             if (isProcessing || speechState == SpeechState.PROCESSING) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(13.dp),
@@ -1077,6 +1124,214 @@ fun CoreHudScreen(
                                     fontFamily = FontFamily.Monospace
                                 )
                             }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // MIC SENSITIVITY CONTROLLER
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "MIC SENSITIVITY",
+                                    color = ArcCyan,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = String.format(Locale.ROOT, "%.1fx", micSensitivity),
+                                    color = ArcCyan,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Slider(
+                                value = micSensitivity,
+                                onValueChange = { onSetMicSensitivity(it) },
+                                valueRange = 0.5f..2.0f,
+                                steps = 14,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = ArcCyan,
+                                    activeTrackColor = ArcCyan,
+                                    inactiveTrackColor = BorderCyan.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier.fillMaxWidth().height(26.dp).testTag("hud_mic_sensitivity_slider")
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // NOISE dB GATE MANUAL CONTROLLER
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "NOISE GATE dB",
+                                        color = if (isManualNoiseGate) NeonAmber else ArcCyan,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(if (isManualNoiseGate) NeonAmber.copy(alpha = 0.2f) else ArcCyanContainer)
+                                            .border(1.dp, if (isManualNoiseGate) NeonAmber else ArcCyan, RoundedCornerShape(3.dp))
+                                            .clickable { onSetNoiseGateMode(!isManualNoiseGate) }
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isManualNoiseGate) "MANUAL" else "AUTO",
+                                            fontSize = 7.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isManualNoiseGate) NeonAmber else ArcCyan,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "${String.format(Locale.ROOT, "%.1f", noiseGateThresholdDb)} dB",
+                                    color = if (isManualNoiseGate) NeonAmber else ArcCyan,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Slider(
+                                value = noiseGateThresholdDb,
+                                onValueChange = { onSetNoiseGateThresholdDb(it, true) },
+                                valueRange = 1.0f..15.0f,
+                                steps = 13,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = if (isManualNoiseGate) NeonAmber else ArcCyan,
+                                    activeTrackColor = if (isManualNoiseGate) NeonAmber else ArcCyan,
+                                    inactiveTrackColor = BorderCyan.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier.fillMaxWidth().height(26.dp).testTag("hud_noise_gate_slider")
+                            )
+
+                            // Noise dB Quick Presets
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(
+                                    Pair(1.5f, "1.5dB QUIET"),
+                                    Pair(3.0f, "3.0dB NORMAL"),
+                                    Pair(6.0f, "6.0dB FAN"),
+                                    Pair(10.0f, "10.0dB LOUD")
+                                ).forEach { (threshold, label) ->
+                                    val isSelected = isManualNoiseGate && kotlin.math.abs(noiseGateThresholdDb - threshold) < 0.2f
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(if (isSelected) NeonAmber.copy(alpha = 0.25f) else SurfaceVariantDark)
+                                            .border(
+                                                1.dp,
+                                                if (isSelected) NeonAmber else BorderCyan.copy(alpha = 0.3f),
+                                                RoundedCornerShape(3.dp)
+                                            )
+                                            .clickable { onSetNoiseGateThresholdDb(threshold, true) }
+                                            .padding(vertical = 3.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            color = if (isSelected) NeonAmber else TextSecondary,
+                                            fontSize = 7.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+
+                            // VOICE CONTROLS: FEMALE ONLY + SPEECH RATE & PITCH
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "JARVIS VOICE: WOMAN VOICE",
+                                    color = NeonGreen,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(NeonGreen.copy(alpha = 0.15f))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "FEMALE LOCKED ✓",
+                                        fontSize = 7.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NeonGreen,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+
+                            // Speech Rate
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "RATE: ${String.format(Locale.ROOT, "%.2fx", speechRate)}",
+                                    color = TextSecondary,
+                                    fontSize = 8.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "PITCH: ${String.format(Locale.ROOT, "%.2fx", speechPitch)}",
+                                    color = NeonGreen,
+                                    fontSize = 8.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Slider(
+                                    value = speechRate,
+                                    onValueChange = { onSetSpeechRate(it) },
+                                    valueRange = 0.6f..1.8f,
+                                    steps = 11,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = ArcCyan,
+                                        activeTrackColor = ArcCyan,
+                                        inactiveTrackColor = BorderCyan.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier.weight(1f).height(24.dp).testTag("hud_speech_rate_slider")
+                                )
+                                Slider(
+                                    value = speechPitch,
+                                    onValueChange = { onSetSpeechPitch(it) },
+                                    valueRange = 0.7f..1.6f,
+                                    steps = 17,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = NeonGreen,
+                                        activeTrackColor = NeonGreen,
+                                        inactiveTrackColor = BorderCyan.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier.weight(1f).height(24.dp).testTag("hud_speech_pitch_slider")
+                                )
+                            }
                         }
                     }
                 }
@@ -1089,14 +1344,39 @@ fun CoreHudScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = "COMMAND PROTOCOLS",
-                    color = TextMuted,
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (selectedLanguage == VoiceLanguage.MARATHI) "कमांड प्रोटोकॉल्स" else "COMMAND PROTOCOLS",
+                        color = TextMuted,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(ArcCyanContainer)
+                            .border(1.dp, ArcCyan, RoundedCornerShape(4.dp))
+                            .clickable { onOpenCommandsHelp() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("hud_all_commands_help_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (selectedLanguage == VoiceLanguage.MARATHI) "सर्व कमांड्स व मदत ➜" else "ALL COMMANDS & HELP ➜",
+                            color = ArcCyan,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
 
                 Row(
                     modifier = Modifier
@@ -1107,18 +1387,32 @@ fun CoreHudScreen(
                     quickCommands.forEach { cmd ->
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(SurfaceVariantDark)
-                                .border(1.dp, BorderCyan.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-                                .clickable { onSubmitCommand(cmd) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .border(1.dp, BorderCyan.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = androidx.compose.material3.ripple(bounded = true, color = ArcCyan),
+                                    onClick = { onSubmitCommand(cmd) }
+                                )
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
                         ) {
-                            Text(
-                                text = cmd,
-                                color = TextPrimary,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = ArcCyan.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = cmd,
+                                    color = TextPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
                     }
                 }

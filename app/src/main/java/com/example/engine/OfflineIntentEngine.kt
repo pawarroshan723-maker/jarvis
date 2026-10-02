@@ -35,7 +35,21 @@ class OfflineIntentEngine(
         hardware.acquireCpuWakeLock(10000, "Jarvis:OfflineIntentProcessing")
 
         val clean = command.trim().lowercase(Locale.ROOT)
-        val isMarathi = clean.any { it in '\u0900'..'\u097F' }
+        val isLanguageSelectedMarathi = speechManager?.selectedLanguage?.value == com.example.voice.VoiceLanguage.MARATHI
+        val hasDevanagari = clean.any { it in '\u0900'..'\u097F' }
+        val isMarathiPhrase = com.example.voice.MarathiTtsManager.isMarathiPhrase(clean)
+        val isMarathi = hasDevanagari || isMarathiPhrase || isLanguageSelectedMarathi
+
+        // Normalize all number variations (Devanagari numerals, Marathi number words, English number words)
+        // into ASCII digits so that all regexes and command parsers resolve consistently
+        var normalizedClean = clean
+        normalizedClean = com.example.voice.MarathiTtsManager.devanagariToAsciiDigits(normalizedClean)
+        for ((word, num) in com.example.voice.MarathiTtsManager.MARATHI_WORDS_TO_NUM) {
+            if (normalizedClean.contains(word)) {
+                normalizedClean = normalizedClean.replace(word, num.toString())
+            }
+        }
+        normalizedClean = com.example.voice.MarathiTtsManager.convertEnglishNumberWordsToDigits(normalizedClean)
 
         // PLAYER COMMANDS OVERVIEW / PLAYER HELP (PLAYER CMD)
         if (clean == "player cmd" || clean == "player command" || clean == "player commands" ||
@@ -284,6 +298,100 @@ class OfflineIntentEngine(
             )
         }
 
+        // LANGUAGE SWITCHING VIA VOICE
+        if (clean.contains("switch to marathi") || clean.contains("speak in marathi") || clean.contains("मराठीत बोल") ||
+            clean.contains("मराठीत बोला") || clean.contains("मराठी भाषा निवडा") || clean.contains("मराठी मोड") ||
+            clean.contains("मराठी भाषा चालू करा")
+        ) {
+            speechManager?.setLanguage(com.example.voice.VoiceLanguage.MARATHI)
+            return IntentResult(
+                success = true,
+                spokenResponse = "मी मराठी भाषा निवडली आहे, सर. आता मी मराठीमध्ये आपल्या आज्ञा स्वीकारेन.",
+                intentAction = "SET_LANGUAGE_MARATHI"
+            )
+        }
+
+        if (clean.contains("switch to english") || clean.contains("speak in english") || clean.contains("इंग्रजीत बोल") ||
+            clean.contains("इंग्रजीत बोला") || clean.contains("इंग्रजी भाषा निवडा") || clean.contains("इंग्लिश मोड") ||
+            clean.contains("इंग्रजी भाषा चालू करा")
+        ) {
+            speechManager?.setLanguage(com.example.voice.VoiceLanguage.ENGLISH)
+            return IntentResult(
+                success = true,
+                spokenResponse = "English voice interface selected, sir. Standing by for your instructions.",
+                intentAction = "SET_LANGUAGE_ENGLISH"
+            )
+        }
+
+        // EMERGENCY SHORTCUTS / HOTLINES
+        if (clean == "call police" || clean == "call 100" || clean == "100" || clean.contains("पोलिसांना फोन") || clean.contains("पोलिस बोलवा")) {
+            if (telephonyManager != null) {
+                val (success, msg) = telephonyManager.makeCall("100")
+                val reply = if (isMarathi) "पोलिस नियंत्रण कक्षाला १०० वर कॉल लावला आहे!" else msg
+                return IntentResult(success, reply, "CALL_POLICE")
+            }
+        }
+
+        if (clean == "call ambulance" || clean == "call 108" || clean == "108" || clean.contains("अ‍ॅम्ब्युलन्स") || clean.contains("रुग्णवाहिका")) {
+            if (telephonyManager != null) {
+                val (success, msg) = telephonyManager.makeCall("108")
+                val reply = if (isMarathi) "रुग्णवाहिकेला १०८ वर त्वरित कॉल लावला आहे!" else msg
+                return IntentResult(success, reply, "CALL_AMBULANCE")
+            }
+        }
+
+        if (clean == "call fire" || clean == "call fire brigade" || clean == "call 101" || clean == "101" || clean.contains("अग्निशामक") || clean.contains("दमकल")) {
+            if (telephonyManager != null) {
+                val (success, msg) = telephonyManager.makeCall("101")
+                val reply = if (isMarathi) "अग्निशामक दलाला १०१ वर कॉल लावला आहे!" else msg
+                return IntentResult(success, reply, "CALL_FIRE")
+            }
+        }
+
+        // SOCIAL / IDENTITY / POLITE INTENTS
+        if (clean == "who are you" || clean == "what is your name" || clean == "tell me about yourself" ||
+            clean == "तू कोण आहेस" || clean == "तुझे नाव काय आहे" || clean == "तुझी माहिती सांग" || clean == "तुझा परिचय द्या"
+        ) {
+            val reply = if (isMarathi) {
+                "मी जार्व्हिस (J.A.R.V.I.S.) आहे, आपला प्रगत कृत्रिम बुद्धिमत्ता आणि स्थानिक ऑटोमेशन सहाय्यक, सर. मी हार्डवेअर, सेन्सर्स, फोन कॉल्स आणि गुगल जेमिनीद्वारे आपल्या सर्व आज्ञा पूर्ण करतो."
+            } else {
+                "I am J.A.R.V.I.S., Just A Rather Very Intelligent System. Your autonomous Android automation core, environmental sensory controller, and intelligence assistant, sir."
+            }
+            return IntentResult(true, reply, "IDENTITY")
+        }
+
+        if (clean == "who made you" || clean == "who created you" || clean == "who developed you" ||
+            clean == "तुला कोणी बनवले" || clean == "तुझा निर्माता कोण आहे"
+        ) {
+            val reply = if (isMarathi) {
+                "मला जार्व्हिस ऑटोमेशन कोर आणि गुगल जेमिनी इंटेलिजन्सच्या प्रगत आर्किटेक्चरवर विकसित केले आहे, सर."
+            } else {
+                "I was engineered as the next-generation Jarvis Autonomous Automation System with local hardware control and Google Gemini intelligence, sir."
+            }
+            return IntentResult(true, reply, "CREATOR")
+        }
+
+        if (clean == "thank you" || clean == "thanks" || clean == "thank you jarvis" || clean == "thanks jarvis" ||
+            clean == "धन्यवाद" || clean == "आभार" || clean == "खूप छान" || clean == "शाब्बास" || clean == "well done"
+        ) {
+            val reply = if (isMarathi) "आपल्या सेवेत सदैव हजर आहे, सर! काहीही काम असल्यास नक्की सांगा."
+            else "Always at your service, sir. Let me know if you require anything further."
+            return IntentResult(true, reply, "THANKS")
+        }
+
+        if (clean == "good morning" || clean == "शुभ सकाळ") {
+            val batt = currentTelemetry.batteryLevel
+            val reply = if (isMarathi) "शुभ सकाळ, सर! सर्व यंत्रणा उत्तम कार्यरत आहेत. बॅटरी $batt टक्के आहे. आपला आजचा दिवस आनंददायी जावो!"
+            else "Good morning, sir. All core diagnostics nominal. Battery is at $batt percent. Standing by for today's tasks."
+            return IntentResult(true, reply, "GOOD_MORNING")
+        }
+
+        if (clean == "good night" || clean == "शुभ रात्री") {
+            val reply = if (isMarathi) "शुभ रात्री, सर! शांत झोप घ्या. बॅकग्राउंड सेन्सर आणि वेक लॉक सुरक्षा सुरू राहील."
+            else "Good night, sir. Background sensor monitors and safeguards will remain active while you rest."
+            return IntentResult(true, reply, "GOOD_NIGHT")
+        }
+
         // 1. GREETINGS & STATUS REPORT (English & Marathi)
         if (clean == "jarvis" || clean == "hello jarvis" || clean == "hi jarvis" || clean == "are you there" ||
             clean == "hello" || clean == "hi" || clean == "hey jarvis" || clean == "hey" || clean == "wake up" ||
@@ -317,36 +425,196 @@ class OfflineIntentEngine(
             val ringer = hardware.getRingerModeString()
             return IntentResult(
                 success = true,
-                spokenResponse = if (isMarathi) "सिस्टीम स्थिती: बॅटरी $batt टक्के ($charging). आवाज $vol टक्के ($ringer मोड). सर्व मुख्य सेवा उत्तम कार्यरत आहेत, सर."
+                spokenResponse = if (isMarathi) "सिस्टीम स्थिती: बॅटरी ${MarathiTtsManager.numberToMarathiWords(batt)} टक्के ($charging). आवाज ${MarathiTtsManager.numberToMarathiWords(vol)} टक्के ($ringer मोड). सर्व मुख्य सेवा उत्तम कार्यरत आहेत, सर."
                 else "System status: Battery is at $batt percent, $charging. Media volume is $vol percent in $ringer mode. All primary services are operational, sir.",
                 intentAction = "STATUS_REPORT"
             )
         }
 
-        if (clean.contains("what can you do") || clean.contains("help") || clean.contains("commands") ||
-            clean.contains("तू काय करू शकतोस") || clean.contains("मदत") || clean.contains("कमांड")
+        if (clean == "what can you do" || clean == "help" || clean == "jarvis help" || clean == "commands" ||
+            clean == "तू काय करू शकतोस" || clean == "मदत" || clean == "कमांड" || clean == "jarvis commands"
         ) {
             return IntentResult(
                 success = true,
-                spokenResponse = if (isMarathi) "मी फोन कॉल्स, एसएमएस, टॉर्च, आवाज आणि ऑटोमेशन नियंत्रित करू शकतो. गणित सोडवू शकतो आणि ऑनलाइन जेमिनीद्वारे ताजे जोक व प्रश्नांची सविस्तर उत्तरे देऊ शकतो, सर."
-                else "I can handle direct phone calls, compose SMS, control your flashlight, adjust audio volumes, solve calculations, and generate dynamic jokes and deep knowledge via online Gemini intelligence, sir.",
+                spokenResponse = if (isMarathi) "मी फोन कॉल्स, एसएमएस, टॉर्च, आवाज, डीएसपी हार्डवेअर तपासणी, नॉईज गेट आणि ऑटोमेशन नियंत्रित करू शकतो. गणित सोडवू शकतो आणि ऑनलाइन जेमिनीद्वारे ताजे जोक व प्रश्नांची सविस्तर उत्तरे देऊ शकतो, सर."
+                else "I can handle direct phone calls, compose SMS, control your flashlight, adjust audio volumes, audit DSP hardware, adjust noise dB gates, solve calculations, and generate dynamic knowledge via Gemini intelligence, sir.",
                 intentAction = "HELP"
             )
         }
 
-        // TIME & DATE (Indian Standard Time + Device Local Time)
-        val asksIndiaTime = clean.contains("india") || clean.contains("indian") || clean.contains("ist") || clean.contains("भारत") || clean.contains("इंडिया")
+        // DSP HARDWARE VS SIMULATOR VERIFICATION COMMAND
+        if (clean.contains("dsp") || clean.contains("डीएसपी") || clean.contains("digital signal processor")) {
+            if (clean.contains("status") || clean.contains("check") || clean.contains("audit") ||
+                clean.contains("verify") || clean.contains("hardware") || clean.contains("simulator") ||
+                clean.contains("actual") || clean.contains("real") ||
+                clean.contains("तपासा") || clean.contains("माहिती") || clean.contains("स्थिती") ||
+                clean == "dsp" || clean == "check dsp" || clean == "dsp status" || clean == "verify dsp"
+            ) {
+                val audit = speechManager?.dspHardwareAudit?.value
+                    ?: if (context != null) com.example.voice.DspHardwareInspector.performHardwareAudit(context) else null
 
-        val isTimeQuery = clean.contains("what is time") || clean.contains("what is the time") || clean.contains("what's the time") ||
-                clean.contains("what time") || clean == "time" || clean.contains("current time") ||
-                clean.contains("what this time") || clean.contains("what is this time") || clean == "this time" ||
-                clean.contains("tell time") || clean.contains("tell me time") || clean.contains("tell the time") ||
-                clean.contains("time please") || clean.contains("time now") || clean.contains("time right now") ||
-                clean.contains("india time") || clean.contains("indian time") || clean.contains("time in india") ||
-                clean.contains("ist time") || clean.contains("time kya hai") || clean.contains("samay kya hai") ||
-                clean.contains("वेळ काय झाली") || clean.contains("किती वाजले") || clean.contains("वेळ सांगा") || clean == "वेळ" ||
-                clean.contains("वेळ किती") || clean.contains("सध्याची वेळ") ||
-                clean.contains("भारतातील वेळ") || clean.contains("इंडिया वेळ") || clean.contains("आता काय वेळ झाली")
+                val spoken = if (audit != null) {
+                    if (isMarathi) {
+                        val dspTypeStr = when {
+                            audit.isActualHardware -> "प्रत्यक्ष फिजिकल हार्डवेअर डीएसपी (Physical SoC DSP)"
+                            audit.isSimulator -> "अँड्रॉइड एमुलेटर सिम्युलेटर (Emulator Simulator)"
+                            else -> "सॉफ्टवेअर ऑडिओ फिल्टर (Software Audio Filter)"
+                        }
+                        val nsStr = if (audit.isNoiseSuppressorAvailable) "हार्डवेअर नॉईज सप्रेशन उपलब्ध आहे" else "सॉफ्टवेअर नॉईज सप्रेशन सक्रिय आहे"
+                        val aecStr = if (audit.isEchoCancelerAvailable) "इको कॅन्सलेशन उपलब्ध आहे" else "इको कॅन्सलेशन फॉलबॅकवर आहे"
+                        "डीएसपी हार्डवेअर ऑडिट: डिव्हाइस ${audit.deviceModel}, चिपसेट ${audit.chipsetSoc}, व्हेंडर ${audit.hardwareVendor}. डीएसपी प्रकार: $dspTypeStr. $nsStr आणि $aecStr."
+                    } else {
+                        val dspTypeStr = when {
+                            audit.isActualHardware -> "Actual Physical Hardware DSP on SoC"
+                            audit.isSimulator -> "Android Emulator Simulator (Goldfish/Ranchu)"
+                            else -> "Software Audio Processing Filter"
+                        }
+                        val nsStr = if (audit.isNoiseSuppressorAvailable) "Hardware Noise Suppression active" else "Software noise filter active"
+                        val aecStr = if (audit.isEchoCancelerAvailable) "Acoustic Echo Canceler supported" else "Echo cancellation via fallback"
+                        "DSP Audit Report: Device is ${audit.deviceModel} on ${audit.chipsetSoc} (${audit.hardwareVendor}). DSP Architecture: $dspTypeStr. Status: $nsStr, $aecStr. Total registered audio effects: ${audit.effects.size}."
+                    }
+                } else {
+                    if (isMarathi) "डीएसपी ऑडिट सुरू आहे, सर. सर्व ऑडिओ सिस्टिम कार्यरत आहेत."
+                    else "DSP subsystem is online and monitoring audio streams, sir."
+                }
+
+                return IntentResult(
+                    success = true,
+                    spokenResponse = spoken,
+                    intentAction = "DSP_AUDIT"
+                )
+            }
+        }
+
+        // NOISE dB SENSITIVITY & GATE CONTROLLER COMMANDS
+        if (clean.contains("noise gate") || clean.contains("noise sensitivity") || clean.contains("noise threshold") ||
+            clean.contains("नॉईज गेट") || clean.contains("नॉईज सेन्सिटिव्हिटी") || clean.contains("नॉईज थ्रेशोल्ड")
+        ) {
+            // Check for Auto mode
+            if (clean.contains("auto") || clean.contains("automatic") || clean.contains("डायनॅमिक") || clean.contains("ऑटो")) {
+                speechManager?.setNoiseGateMode(false)
+                return IntentResult(
+                    success = true,
+                    spokenResponse = if (isMarathi) "नॉईज गेट ऑटोमॅटिक डायनॅमिक मोडवर सेट केला आहे, सर. बॅकग्राउंड आवाजानुसार थ्रेशोल्ड आपोआप नियंत्रित होईल."
+                    else "Noise gate configured to Dynamic Auto mode, sir. Sensitivity will adapt in real time to ambient noise floor.",
+                    intentAction = "SET_NOISE_GATE_AUTO"
+                )
+            }
+            // Check for Manual mode
+            if (clean.contains("manual") || clean.contains("मॅन्युअल")) {
+                speechManager?.setNoiseGateMode(true)
+                val currentThresh = speechManager?.noiseGateThresholdDb?.value ?: 3.0f
+                return IntentResult(
+                    success = true,
+                    spokenResponse = if (isMarathi) "नॉईज गेट मॅन्युअल मोडवर सेट केला आहे. सध्याचा थ्रेशोल्ड ${String.format(Locale.ROOT, "%.1f", currentThresh)} डीबी आहे."
+                    else "Noise gate switched to Manual mode at ${String.format(Locale.ROOT, "%.1f", currentThresh)} dB cutoff, sir.",
+                    intentAction = "SET_NOISE_GATE_MANUAL"
+                )
+            }
+            // Check for specific dB value
+            val dbMatch = Regex("""(\d+(?:\.\d+)?)\s*(?:db|डीबी|decibel|डेसिबल)?""").find(normalizedClean)
+            if (dbMatch != null) {
+                val dbVal = dbMatch.groupValues[1].toFloatOrNull()
+                if (dbVal != null && dbVal in 0.5f..20.0f) {
+                    speechManager?.setNoiseGateThresholdDb(dbVal, true)
+                    return IntentResult(
+                        success = true,
+                        spokenResponse = if (isMarathi) "नॉईज गेट थ्रेशोल्ड ${String.format(Locale.ROOT, "%.1f", dbVal)} डीबी मॅन्युअलवर सेट केला आहे, सर."
+                        else "Noise gate threshold manually calibrated to ${String.format(Locale.ROOT, "%.1f", dbVal)} dB, sir.",
+                        intentAction = "SET_NOISE_GATE_DB"
+                    )
+                }
+            }
+            // Status query
+            val currentThresh = speechManager?.noiseGateThresholdDb?.value ?: 3.0f
+            val isManual = speechManager?.isManualNoiseGate?.value ?: false
+            val modeStr = if (isManual) (if (isMarathi) "मॅन्युअल" else "Manual") else (if (isMarathi) "ऑटो डायनॅमिक" else "Auto Dynamic")
+            val liveSnr = speechManager?.liveSnrDb?.value ?: 0f
+            return IntentResult(
+                success = true,
+                spokenResponse = if (isMarathi) "नॉईज गेट स्थिती: $modeStr मोड, थ्रेशोल्ड ${String.format(Locale.ROOT, "%.1f", currentThresh)} डीबी, सध्याचा एसएनआर ${String.format(Locale.ROOT, "%.1f", liveSnr)} डीबी आहे, सर."
+                else "Noise Gate Status: $modeStr mode, threshold ${String.format(Locale.ROOT, "%.1f", currentThresh)} dB, live SNR ${String.format(Locale.ROOT, "%.1f", liveSnr)} dB, sir.",
+                intentAction = "NOISE_GATE_STATUS"
+            )
+        }
+
+        // TIME & DATE (Indian Standard Time + Device Local Time + World Clock)
+        val asksIndiaTime = clean == "india time" || clean == "indian time" || clean == "time in india" || clean == "ist time" || clean == "भारतातील वेळ" || clean == "इंडिया वेळ"
+
+        // Check for specific World Clock City
+        val worldCityTimeMap = mapOf(
+            "london" to ("Europe/London" to "London"),
+            "लंडन" to ("Europe/London" to "लंडन"),
+            "new york" to ("America/New_York" to "New York"),
+            "nyc" to ("America/New_York" to "New York"),
+            "न्यूयॉर्क" to ("America/New_York" to "न्यूयॉर्क"),
+            "tokyo" to ("Asia/Tokyo" to "Tokyo"),
+            "टोकियो" to ("Asia/Tokyo" to "टोकियो"),
+            "dubai" to ("Asia/Dubai" to "Dubai"),
+            "दुबई" to ("Asia/Dubai" to "दुबई"),
+            "singapore" to ("Asia/Singapore" to "Singapore"),
+            "सिंगापूर" to ("Asia/Singapore" to "सिंगापूर"),
+            "paris" to ("Europe/Paris" to "Paris"),
+            "पॅरिस" to ("Europe/Paris" to "पॅरिस"),
+            "sydney" to ("Australia/Sydney" to "Sydney"),
+            "सिडनी" to ("Australia/Sydney" to "सिडनी"),
+            "california" to ("America/Los_Angeles" to "California"),
+            "los angeles" to ("America/Los_Angeles" to "Los Angeles"),
+            "कॅलिफोर्निया" to ("America/Los_Angeles" to "कॅलिफोर्निया"),
+            "berlin" to ("Europe/Berlin" to "Berlin"),
+            "बर्लिन" to ("Europe/Berlin" to "बर्लिन"),
+            "moscow" to ("Europe/Moscow" to "Moscow"),
+            "मॉस्को" to ("Europe/Moscow" to "मॉस्को"),
+            "toronto" to ("America/Toronto" to "Toronto"),
+            "टोरंटो" to ("America/Toronto" to "टोरंटो"),
+            "hong kong" to ("Asia/Hong_Kong" to "Hong Kong"),
+            "हाँगकाँग" to ("Asia/Hong_Kong" to "हाँगकाँग")
+        )
+
+        val matchedWorldCity = worldCityTimeMap.entries.firstOrNull { (keyword, _) ->
+            clean.contains("time in $keyword") || clean.contains("$keyword time") || clean.contains("$keyword मधील वेळ") || clean.contains("$keyword वेळ")
+        }
+
+        if (matchedWorldCity != null) {
+            val (tzId, cityName) = matchedWorldCity.value
+            val tz = TimeZone.getTimeZone(tzId)
+            val cal = Calendar.getInstance(tz)
+            val h24 = cal.get(Calendar.HOUR_OF_DAY)
+            val rawH = cal.get(Calendar.HOUR)
+            val h12 = if (rawH == 0) 12 else rawH
+            val m = cal.get(Calendar.MINUTE)
+            val isPm = h24 >= 12
+            val amPm = if (isPm) "PM" else "AM"
+            val hWord = MarathiTtsManager.numberToEnglishWords(h12)
+            val mWord = if (m == 0) "" else if (m in 1..9) "oh ${MarathiTtsManager.numberToEnglishWords(m)}" else MarathiTtsManager.numberToEnglishWords(m)
+            val enTime = "$hWord $mWord $amPm".trim()
+
+            val hMr = MarathiTtsManager.numberToMarathiWords(h12)
+            val mMr = MarathiTtsManager.numberToMarathiWords(m)
+            val perMr = when {
+                h24 in 0..3 -> "मध्यरात्री"
+                h24 in 4..11 -> "सकाळी"
+                h24 in 12..15 -> "दुपारी"
+                h24 in 16..19 -> "संध्याकाळी"
+                else -> "रात्री"
+            }
+            val mrTime = if (m == 0) "$perMr $hMr वाजता" else "$perMr $hMr वाजून $mMr मिनिटे"
+
+            val reply = if (isMarathi) "$cityName मध्ये सध्याची वेळ $mrTime झाली आहे, सर."
+            else "The current time in $cityName is $enTime, sir."
+            return IntentResult(true, reply, "WORLD_TIME")
+        }
+
+        val isTimeQuery = clean == "time" || clean == "what is the time" || clean == "what is time" ||
+                clean == "what's the time" || clean == "what time is it" || clean == "what time is it now" ||
+                clean == "current time" || clean == "tell me the time" || clean == "tell the time" ||
+                clean == "tell me time" || clean == "time please" || clean == "time now" ||
+                clean == "time right now" || clean == "what is current time" || clean == "time in india" ||
+                clean == "indian time" || clean == "india time" || clean.contains("वेळ काय") ||
+                clean.contains("किती वाजले") || clean.contains("वेळ सांगा") || clean == "वेळ" ||
+                clean.contains("kiti vajle") || clean.contains("time sanga") || clean.contains("time kiti") ||
+                clean.matches(Regex("""^(?:tell me\s+)?(?:what(?:'s|\s+is)?(?:\s+the)?\s+)?(?:current\s+)?time(?:\s+is\s+it)?(?:\s+now)?(?:\s+in\s+india)?\??$""")) ||
+                clean.matches(Regex("""^(?:आता\s+)?(?:काय\s+)?(?:वेळ\s+झाली|किती\s+वाजले|वेळ\s+सांगा|वेळ\s+काय)(?:\s+आहे)?\??$"""))
 
         if (isTimeQuery) {
             val now = Calendar.getInstance()
@@ -394,9 +662,14 @@ class OfflineIntentEngine(
             )
         }
 
-        if (clean.contains("what date") || clean.contains("what day") || clean == "date" || clean.contains("today's date") ||
-            clean.contains("आजची तारीख") || clean.contains("आज कोणता वार") || clean.contains("तारीख काय") || clean == "तारीख"
-        ) {
+        val isDateQuery = clean == "date" || clean == "what is the date" || clean == "what's the date" ||
+                clean == "what is date" || clean == "what is today's date" || clean == "what's today's date" ||
+                clean == "today's date" || clean == "current date" || clean == "tell me the date" ||
+                clean.contains("what date") || clean.contains("what day") || clean.contains("which day") ||
+                clean.contains("आजची तारीख") || clean.contains("आज कोणता वार") || clean.contains("तारीख काय") ||
+                clean == "तारीख" || clean.contains("आजचा वार") || clean.contains("tarikh kay") || clean.contains("aajchi tarikh")
+
+        if (isDateQuery) {
             val now = Calendar.getInstance()
             val dayOfWeekEn = SimpleDateFormat("EEEE", Locale.US).format(now.time)
             val dateEn = SimpleDateFormat("MMMM d, yyyy", Locale.US).format(now.time)
@@ -434,7 +707,8 @@ class OfflineIntentEngine(
             clean.contains("टॉर्च चालू") || clean.contains("फ्लॅश चालू") || clean.contains("लाईट चालू") ||
             clean.contains("टॉर्च लावा") || clean.contains("टॉर्च लाव") || clean.contains("लाईट लावा") || clean.contains("लाईट लाव") ||
             clean.contains("टॉर्च ऑन") || clean.contains("फ्लॅश ऑन") || clean.contains("टॉर्च पेटवा") || clean.contains("टॉर्च पेटव") ||
-            clean.contains("दिवा लावा") || clean.contains("दिवा लाव") || clean.contains("torch lav") || clean.contains("torch chalu")
+            clean.contains("दिवा लावा") || clean.contains("दिवा लाव") || clean.contains("torch lav") || clean.contains("torch chalu") ||
+            clean.contains("light chalu") || clean.contains("flash chalu") || clean.contains("ujed kara")
         ) {
             val success = hardware.setFlashlight(true)
             val msg = if (isMarathi) {
@@ -451,7 +725,7 @@ class OfflineIntentEngine(
             clean.contains("टॉर्च बंद") || clean.contains("फ्लॅश बंद") || clean.contains("लाईट बंद") ||
             clean.contains("टॉर्च विझवा") || clean.contains("टॉर्च विझव") || clean.contains("लाईट विझवा") || clean.contains("लाईट विझव") ||
             clean.contains("दिवा बंद") || clean.contains("टॉर्च ऑफ") || clean.contains("फ्लॅश ऑफ") ||
-            clean.contains("torch band") || clean.contains("torch off")
+            clean.contains("torch band") || clean.contains("torch off") || clean.contains("light band") || clean.contains("flash band")
         ) {
             val success = hardware.setFlashlight(false)
             val msg = if (isMarathi) {
@@ -460,6 +734,18 @@ class OfflineIntentEngine(
                 if (success) "Flashlight deactivated." else "Unable to deactivate flashlight."
             }
             return IntentResult(success, msg, "TORCH_OFF")
+        }
+
+        if (clean.contains("strobe") || clean.contains("स्ट्रोब") || clean.contains("फ्लॅश स्ट्रोब") || clean.contains("strobe light")) {
+            val success = hardware.startFlashlightStrobe(10)
+            val msg = if (isMarathi) "स्ट्रोब लाईट सुरू केली आहे, सर." else "Flashlight strobe activated, sir."
+            return IntentResult(success, msg, "STROBE_LIGHT")
+        }
+
+        if (clean.contains("flash sos") || clean.contains("torch sos") || clean.contains("एसओएस लाईट") || clean.contains("sos light")) {
+            val success = hardware.startFlashlightSos()
+            val msg = if (isMarathi) "एसओएस फ्लॅश सुरू केला आहे!" else "Emergency SOS flashlight sequence started!"
+            return IntentResult(success, msg, "SOS_LIGHT")
         }
 
         if (clean.contains("toggle flashlight") || clean.contains("toggle torch") || clean.contains("टॉर्च टॉगल") || clean.contains("फ्लॅश टॉगल")) {
@@ -475,8 +761,9 @@ class OfflineIntentEngine(
 
         // 3. AUDIO & VOLUME CONTROL (English & Marathi)
         if (clean.contains("mute phone") || clean.contains("mute all") || clean == "silence" || clean.contains("silent mode") || clean == "mute" ||
-            clean.contains("म्यूट करा") || clean.contains("म्यूट कर") || clean.contains("शांत करा") || clean.contains("शांत कर") ||
-            clean.contains("सायलेंट करा") || clean.contains("सायलेंट कर") || clean.contains("आवाज बंद करा") || clean.contains("आवाज बंद कर") ||
+            clean.contains("म्यूट करा") || clean.contains("म्यूट कर") || clean.contains("म्यूट") || clean.contains("शांत करा") || clean.contains("शांत कर") ||
+            clean.contains("सायलेंट करा") || clean.contains("सायलेंट कर") || clean.contains("सायलेंट मोड") || clean.contains("सायलेंट") ||
+            clean.contains("आवाज बंद करा") || clean.contains("आवाज बंद कर") ||
             clean.contains("awaaz band") || clean.contains("mute karo")
         ) {
             val success = hardware.muteAllAudio()
@@ -531,14 +818,15 @@ class OfflineIntentEngine(
             return IntentResult(true, msg, "UNMUTE")
         }
 
-        val volumeRegex = Regex("""(?:set|change)?\s*volume\s*(?:to)?\s*(\d{1,3})%?""")
-        val volMatch = volumeRegex.find(clean)
+        val volumeRegex = Regex("""(?:(?:set|change)?\s*volume\s*(?:to)?|आवाज|व्हॉल्युम|awaaz)\s*(\d{1,3})\s*(?:%|टक्के)?(?:\s*(?:करा|कर|kara|kar|ठेवा|set))?""")
+        val volMatch = volumeRegex.find(normalizedClean) ?: Regex("""(\d{1,3})\s*(?:%|टक्के)\s*(?:आवाज|व्हॉल्युम|volume)""").find(normalizedClean)
         if (volMatch != null) {
             val targetPercent = volMatch.groupValues[1].toIntOrNull()
             if (targetPercent != null) {
                 val clamped = targetPercent.coerceIn(0, 100)
                 val success = hardware.setMediaVolumePercent(clamped)
-                return IntentResult(success, "Media volume adjusted to $clamped percent.", "SET_VOLUME")
+                val msg = if (isMarathi) "आवाज $clamped टक्के सेट केला आहे, सर." else "Media volume adjusted to $clamped percent, sir."
+                return IntentResult(success, msg, "SET_VOLUME")
             }
         }
 
@@ -550,7 +838,7 @@ class OfflineIntentEngine(
         ) {
             val batt = currentTelemetry.batteryLevel
             val state = if (currentTelemetry.isCharging) (if (isMarathi) "चार्जिंग चालू आहे" else "currently charging") else (if (isMarathi) "बॅटरीवर चालू आहे" else "on battery power")
-            val msg = if (isMarathi) "सध्या फोनची बॅटरी $batt टक्के आहे ($state)." else "Current battery level is $batt percent, $state."
+            val msg = if (isMarathi) "सध्या फोनची बॅटरी ${MarathiTtsManager.numberToMarathiWords(batt)} टक्के आहे ($state)." else "Current battery level is $batt percent, $state."
             return IntentResult(true, msg, "QUERY_BATTERY")
         }
 
@@ -828,23 +1116,23 @@ class OfflineIntentEngine(
         }
 
         // 5. APP LAUNCHING (English & Marathi)
-        val openAppRegex = Regex("""(?:open|launch|start|उघडा|चालू करा)\s+(.+)""")
-        val trailingOpenRegex = Regex("""(.+)\s+(?:open|launch|start|उघडा|चालू करा)""")
+        val openAppRegex = Regex("""^(?:please\s+)?(?:open|launch|start|उघडा|चालू करा)\s+(.+)$""")
+        val trailingOpenRegex = Regex("""^(.+)\s+(?:open|launch|start|उघडा|चालू करा)$""")
         val appMatch = openAppRegex.find(clean)
         val trailingMatch = trailingOpenRegex.find(clean)
 
         val targetApp = when {
             appMatch != null -> appMatch.groupValues[1].trim()
             trailingMatch != null -> trailingMatch.groupValues[1].trim()
-            clean.contains("कॅमेरा") -> "camera"
-            clean.contains("यूट्यूब") -> "youtube"
-            clean.contains("व्हाट्सअ‍ॅप") || clean.contains("व्हॉट्सॲप") -> "whatsapp"
-            clean.contains("स्पॉटिफाय") -> "spotify"
-            clean.contains("इन्स्टाग्राम") -> "instagram"
-            clean.contains("टेलिग्राम") -> "telegram"
-            clean.contains("कॅल्क्युलेटर") -> "calculator"
-            clean.contains("क्रोम") -> "chrome"
-            clean.contains("गॅलरी") -> "gallery"
+            clean == "कॅमेरा" -> "camera"
+            clean == "यूट्यूब" -> "youtube"
+            clean == "व्हाट्सअ‍ॅप" || clean == "व्हॉट्सॲप" -> "whatsapp"
+            clean == "स्पॉटिफाय" -> "spotify"
+            clean == "इन्स्टाग्राम" -> "instagram"
+            clean == "टेलिग्राम" -> "telegram"
+            clean == "कॅल्क्युलेटर" -> "calculator"
+            clean == "क्रोम" -> "chrome"
+            clean == "गॅलरी" -> "gallery"
             else -> null
         }
 
@@ -855,7 +1143,7 @@ class OfflineIntentEngine(
                 return IntentResult(true, msg, "LAUNCH_APP")
             } else if (appMatch != null || trailingMatch != null) {
                 val msg = if (isMarathi) "'$targetApp' नावाचे ॲप डिव्हाइसवर सापडले नाही, सर." else "Could not find an installed application matching '$targetApp'."
-                return IntentResult(false, msg, "LAUNCH_APP_FAILED")
+                return IntentResult(false, msg, "LAUNCH_APP_FAILED", canFallbackToGemini = true)
             }
         }
 
@@ -1063,7 +1351,7 @@ class OfflineIntentEngine(
         }
 
         // 8. ALARM MANAGEMENT (English & Marathi)
-        if (clean.contains("alarm") || clean.contains("अलार्म") || clean.contains("wake me up")) {
+        if (clean.contains("alarm") || clean.contains("अलार्म") || clean.contains("wake me up") || clean.contains("उठवा")) {
             if (clean.contains("show") || clean.contains("list") || clean.contains("दाखवा") || clean.contains("पहा")) {
                 if (telephonyManager != null) {
                     val success = telephonyManager.showAlarms()
@@ -1072,20 +1360,20 @@ class OfflineIntentEngine(
                 }
             }
 
-            // Extract time: e.g. "set alarm for 7:30 am", "set alarm for 6 am", "अलार्म लावा 7 वाजता"
+            // Extract time: e.g. "set alarm for 7:30 am", "set alarm for 6 am", "अलार्म लावा 7 वाजता", "अलार्म लावा ६:३० वाजता"
             var hour = -1
             var minute = 0
             val isPm = clean.contains("pm") || clean.contains("संध्याकाळी") || clean.contains("रात्री") || clean.contains("दुपारी")
             val isAm = clean.contains("am") || clean.contains("सकाळी") || clean.contains("पहाटे")
 
             val timeColonRegex = Regex("""(\d{1,2}):(\d{2})""")
-            val colonMatch = timeColonRegex.find(clean)
+            val colonMatch = timeColonRegex.find(normalizedClean)
             if (colonMatch != null) {
                 hour = colonMatch.groupValues[1].toIntOrNull() ?: -1
                 minute = colonMatch.groupValues[2].toIntOrNull() ?: 0
             } else {
                 val hourOnlyRegex = Regex("""(?:for|at|वाजता|ला)?\s*(\d{1,2})\s*(?:o'?clock|am|pm|वाजता)?""")
-                val hourMatch = hourOnlyRegex.find(clean)
+                val hourMatch = hourOnlyRegex.find(normalizedClean)
                 if (hourMatch != null) {
                     hour = hourMatch.groupValues[1].toIntOrNull() ?: -1
                 }
@@ -1097,8 +1385,13 @@ class OfflineIntentEngine(
 
                 if (telephonyManager != null) {
                     val (success, msg) = telephonyManager.setAlarm(hour, minute, "Jarvis Alarm", skipUi = true)
-                    val timeFmt = String.format("%02d:%02d", hour, minute)
-                    val reply = if (isMarathi) "सकाळी/वेळेसाठी $timeFmt चा अलार्म सेट केला आहे." else msg
+                    val reply = if (isMarathi) {
+                        val hr12 = if (hour > 12) hour - 12 else if (hour == 0) 12 else hour
+                        val hrWord = MarathiTtsManager.numberToMarathiWords(hr12)
+                        val period = if (hour < 12) "सकाळी" else if (hour < 16) "दुपारी" else if (hour < 20) "संध्याकाळी" else "रात्री"
+                        val minPart = if (minute > 0) " वाजून ${MarathiTtsManager.numberToMarathiWords(minute)} मिनिटांचा" else " वाजताचा"
+                        "$period $hrWord$minPart अलार्म सेट केला आहे, सर."
+                    } else msg
                     return IntentResult(success, reply, "SET_ALARM")
                 }
             }
@@ -1114,9 +1407,9 @@ class OfflineIntentEngine(
                 }
             }
 
-            // Extract duration: "set timer for 5 minutes", "20 seconds timer", "5 मिनिटे टायमर"
-            val minMatch = Regex("""(\d+)\s*(?:min|minute|minutes|मिनिटे|मिनिटांचा)""").find(clean)
-            val secMatch = Regex("""(\d+)\s*(?:sec|second|seconds|सेकंद)""").find(clean)
+            // Extract duration: "set timer for 5 minutes", "20 seconds timer", "5 मिनिटे टायमर", "पाच मिनिटे टायमर"
+            val minMatch = Regex("""(\d+)\s*(?:min|minute|minutes|मिनिटे|मिनिटांचा|मिनिट)""").find(normalizedClean)
+            val secMatch = Regex("""(\d+)\s*(?:sec|second|seconds|सेकंद)""").find(normalizedClean)
 
             val minutes = minMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
             val seconds = secMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -1124,7 +1417,11 @@ class OfflineIntentEngine(
 
             if (totalSeconds > 0 && telephonyManager != null) {
                 val (success, msg) = telephonyManager.setTimer(totalSeconds, "Jarvis Timer", skipUi = true)
-                val reply = if (isMarathi) "$minutes मिनिटे $seconds सेकंदांचा टायमर लावला आहे." else msg
+                val reply = if (isMarathi) {
+                    val minWord = if (minutes > 0) "${MarathiTtsManager.numberToMarathiWords(minutes)} मिनिटे" else ""
+                    val secWord = if (seconds > 0) "${MarathiTtsManager.numberToMarathiWords(seconds)} सेकंदांचा" else ""
+                    "$minWord $secWord टायमर लावला आहे, सर.".trim()
+                } else msg
                 return IntentResult(success, reply, "SET_TIMER")
             }
         }
@@ -1252,12 +1549,22 @@ class OfflineIntentEngine(
         }
 
         // 8c. GEMINI MODEL & FALLBACK CONTROL VIA VOICE (English & Marathi)
-        if (clean.contains("gemini") || clean.contains("जेमिनी") || clean.contains("model") || clean.contains("मॉडेल") || clean.contains("fallback") || clean.contains("फॉलबॅक")) {
+        val isExplicitModelCommand = clean.startsWith("use model") || clean.startsWith("switch model") ||
+                clean.startsWith("set model") || clean.startsWith("change model") ||
+                clean.startsWith("use gemini") || clean.startsWith("switch to gemini") ||
+                clean.startsWith("select model") || clean.startsWith("enable fallback") ||
+                clean.startsWith("disable fallback") || clean.startsWith("turn on fallback") ||
+                clean.startsWith("turn off fallback") || clean.startsWith("enable auto fallback") ||
+                clean.startsWith("disable auto fallback") || clean.startsWith("कॅस्केड") ||
+                clean.startsWith("मॉडेल बदला") || clean.startsWith("जेमिनी मॉडेल") ||
+                clean == "cascade lite" || clean == "cascade flash" || clean == "auto cascade"
+
+        if (isExplicitModelCommand) {
             val app = context as? com.example.JarvisApplication
             if (app != null) {
                 // Check for Auto Fallback toggle
-                if (clean.contains("enable auto fallback") || clean.contains("turn on auto fallback") ||
-                    clean.contains("auto cascade") || clean.contains("ऑटो फॉलबॅक चालू करा") || clean == "enable fallback"
+                if (clean.contains("enable") || clean.contains("turn on") ||
+                    clean.contains("auto cascade") || clean.contains("चालू करा")
                 ) {
                     app.geminiAssistantEngine.setAutoFallbackEnabled(true)
                     val msg = if (isMarathi) "ऑटो फॉलबॅक कॅस्केड सक्रिय केले आहे. एरर आल्यास इतर मॉडेल्स आपोआप वापरले जातील."
@@ -1265,7 +1572,7 @@ class OfflineIntentEngine(
                     return IntentResult(true, msg, "SET_AUTO_FALLBACK_ON")
                 }
 
-                if (clean.contains("disable auto fallback") || clean.contains("turn off auto fallback") || clean.contains("ऑटो फॉलबॅक बंद करा")) {
+                if (clean.contains("disable") || clean.contains("turn off") || clean.contains("बंद करा")) {
                     app.geminiAssistantEngine.setAutoFallbackEnabled(false)
                     val msg = if (isMarathi) "ऑटो फॉलबॅक बंद केले आहे. फक्त निवडलेले मॉडेल वापरले जाईल."
                     else "Auto Fallback disabled, sir. Strictly using designated model tier."
@@ -1273,6 +1580,12 @@ class OfflineIntentEngine(
                 }
 
                 // Check for explicit cascade selection
+                if (clean.contains("cascade pro") || clean.contains("pro cascade") || clean.contains("कॅस्केड प्रॉ") || clean.contains("कॅस्केड प्रो")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.CASCADE_PRO)
+                    val msg = if (isMarathi) "कॅस्केड प्रॉ सक्रिय केले आहे. जेमिनी ३.१ प्रॉ द्वारे सखोल विचार आणि कोडिंग उत्तरे मिळतील."
+                    else "Cascade Pro mode engaged, sir. Traversing Gemini 3.1 Pro Preview and flagship models for deep reasoning and STEM tasks."
+                    return IntentResult(true, msg, "SWITCH_CASCADE_PRO")
+                }
                 if (clean.contains("cascade lite") || clean.contains("lite cascade") || clean.contains("कॅस्केड लाईट")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.CASCADE_LITE)
                     val msg = if (isMarathi) "कॅस्केड लाईट सक्रिय केले आहे. कमाल वेग आणि झिरो 503 त्रुटी."
@@ -1287,15 +1600,10 @@ class OfflineIntentEngine(
                 }
 
                 // Check for explicit model selection
-                if (clean.contains("3.8") || clean.contains("३.८")) {
-                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_8_FLASH)
-                    val msg = if (isMarathi) "जेमिनी ३.८ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.8 Flash model engaged, sir."
-                    return IntentResult(true, msg, "SWITCH_MODEL_3_8")
-                }
-                if (clean.contains("3.7") || clean.contains("३.७")) {
-                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_7_FLASH)
-                    val msg = if (isMarathi) "जेमिनी ३.७ फ्लॅश मॉडेल सक्रिय केले आहे." else "Gemini 3.7 Flash model engaged, sir."
-                    return IntentResult(true, msg, "SWITCH_MODEL_3_7")
+                if (clean.contains("3.1 pro") || clean.contains("३.१ प्रॉ") || clean.contains("pro model") || clean.contains("प्रॉ मॉडेल")) {
+                    app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_1_PRO)
+                    val msg = if (isMarathi) "जेमिनी ३.१ प्रॉ मॉडेल सक्रिय केले आहे. प्रगत बुद्धिमत्ता आणि कोडिंग मोड सुरू आहे." else "Gemini 3.1 Pro flagship model engaged, sir. Deep reasoning core active."
+                    return IntentResult(true, msg, "SWITCH_MODEL_3_1_PRO")
                 }
                 if (clean.contains("3.8") || clean.contains("३.८")) {
                     app.geminiAssistantEngine.setSelectedModelTier(GeminiModelTier.GEMINI_3_8_FLASH)

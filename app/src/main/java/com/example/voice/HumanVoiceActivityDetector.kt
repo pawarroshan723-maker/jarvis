@@ -59,11 +59,59 @@ class HumanVoiceActivityDetector(
     private val _noiseCancellationStatus = MutableStateFlow("Hardware DSP & Adaptive Noise Filter Active")
     val noiseCancellationStatus: StateFlow<String> = _noiseCancellationStatus.asStateFlow()
 
+    // Noise dB Gate & Manual Sensitivity Controls
+    private val _noiseGateThresholdDb = MutableStateFlow(3.0f)
+    val noiseGateThresholdDb: StateFlow<Float> = _noiseGateThresholdDb.asStateFlow()
+
+    private val _isManualNoiseGate = MutableStateFlow(false)
+    val isManualNoiseGate: StateFlow<Boolean> = _isManualNoiseGate.asStateFlow()
+
+    private val _liveSnrDb = MutableStateFlow(0f)
+    val liveSnrDb: StateFlow<Float> = _liveSnrDb.asStateFlow()
+
+    private val _effectiveGateThresholdDb = MutableStateFlow(3.0f)
+    val effectiveGateThresholdDb: StateFlow<Float> = _effectiveGateThresholdDb.asStateFlow()
+
+    private val _isNoiseGateOpen = MutableStateFlow(false)
+    val isNoiseGateOpen: StateFlow<Boolean> = _isNoiseGateOpen.asStateFlow()
+
+    // DSP Hardware vs Simulator Audit Flow
+    private val _dspHardwareAudit = MutableStateFlow(DspHardwareInspector.performHardwareAudit(context))
+    val dspHardwareAudit: StateFlow<DspHardwareAudit> = _dspHardwareAudit.asStateFlow()
+
     // Internal Adaptive Filter Variables
     private var dynamicNoiseFloor = 2.0f
     private var isStreaming = false
     private var wasVoiceActiveBefore = false
     private var isWaitingFor2SecSilence = false
+    private var sensitivityFactor = 1.0f
+
+    fun setSensitivity(factor: Float) {
+        sensitivityFactor = factor.coerceIn(0.5f, 2.5f)
+        updateEffectiveGateThreshold()
+        Log.i(TAG, "VAD sensitivity calibrated to ${sensitivityFactor}x")
+    }
+
+    fun setNoiseGateThresholdDb(thresholdDb: Float, isManual: Boolean = true) {
+        _noiseGateThresholdDb.value = thresholdDb.coerceIn(1.0f, 15.0f)
+        _isManualNoiseGate.value = isManual
+        updateEffectiveGateThreshold()
+        Log.i(TAG, "Manual noise gate threshold set to ${thresholdDb}dB (manual: $isManual)")
+    }
+
+    fun setNoiseGateMode(isManual: Boolean) {
+        _isManualNoiseGate.value = isManual
+        updateEffectiveGateThreshold()
+        Log.i(TAG, "Noise gate mode changed: manual = $isManual")
+    }
+
+    private fun updateEffectiveGateThreshold() {
+        _effectiveGateThresholdDb.value = if (_isManualNoiseGate.value) {
+            _noiseGateThresholdDb.value
+        } else {
+            (_noiseGateThresholdDb.value / sensitivityFactor).coerceIn(1.0f, 8.0f)
+        }
+    }
 
     private val silence2SecRunnable = Runnable {
         if (isWaitingFor2SecSilence) {
@@ -83,29 +131,19 @@ class HumanVoiceActivityDetector(
         checkHardwareDsp()
     }
 
-    private fun checkHardwareDsp() {
-        try {
-            val nsAvailable = isHardwareNoiseSuppressionSupported
-            val aecAvailable = isHardwareEchoCancellationSupported
-            _isNoiseSuppressorActive.value = nsAvailable || aecAvailable
-            _noiseCancellationStatus.value = when {
-                nsAvailable && aecAvailable -> "Hardware DSP (NoiseSuppressor + EchoCanceler Active)"
-                nsAvailable -> "Hardware NoiseSuppressor Active"
-                aecAvailable -> "Hardware AcousticEchoCanceler Active"
-                else -> "Adaptive Acoustic Noise Filter Active"
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error querying hardware DSP: ${e.message}")
-            _isNoiseSuppressorActive.value = true
-            _noiseCancellationStatus.value = "Adaptive Acoustic Noise Filter Active"
-        }
+    fun checkHardwareDsp(): DspHardwareAudit {
+        val audit = DspHardwareInspector.performHardwareAudit(context)
+        _dspHardwareAudit.value = audit
+        _isNoiseSuppressorActive.value = audit.isNoiseSuppressorAvailable || audit.isEchoCancelerAvailable
+        _noiseCancellationStatus.value = audit.shortStatus
+        return audit
     }
 
     @Synchronized
     fun startVadStream(): Boolean {
         isStreaming = true
         checkHardwareDsp()
-        Log.i(TAG, "VAD stream activated (Hardware DSP: ${_isNoiseSuppressorActive.value})")
+        Log.i(TAG, "VAD stream activated (Hardware DSP: ${_isNoiseSuppressorActive.value}, Audit: ${_dspHardwareAudit.value.technicalVerdict})")
         return true
     }
 
@@ -118,6 +156,8 @@ class HumanVoiceActivityDetector(
         _isVoiceActive.value = false
         _humanVoiceConfidence.value = 0f
         _currentRmsDb.value = 0f
+        _liveSnrDb.value = 0f
+        _isNoiseGateOpen.value = false
         Log.i(TAG, "VAD stream stopped cleanly")
     }
 
@@ -127,6 +167,7 @@ class HumanVoiceActivityDetector(
         _isVoiceActive.value = false
         wasVoiceActiveBefore = false
         _humanVoiceConfidence.value = 0f
+        _isNoiseGateOpen.value = false
     }
 
     /**
@@ -140,22 +181,39 @@ class HumanVoiceActivityDetector(
         val safeRms = rmsdB.coerceIn(-5.0f, 15.0f)
         _currentRmsDb.value = safeRms
 
+        val isManual = _isManualNoiseGate.value
+
         // 1. Dynamic Noise Floor Tracking (Adaptive Exponential Moving Average)
-        if (safeRms < dynamicNoiseFloor) {
-            // Rapidly adapt downward to quiet background
-            dynamicNoiseFloor = dynamicNoiseFloor * 0.85f + safeRms * 0.15f
-        } else {
-            // Slowly adapt upward so steady fan or AC noise is ignored
-            dynamicNoiseFloor = dynamicNoiseFloor * 0.985f + safeRms * 0.015f
+        if (!isManual) {
+            if (safeRms < dynamicNoiseFloor) {
+                // Rapidly adapt downward to quiet background
+                dynamicNoiseFloor = dynamicNoiseFloor * 0.85f + safeRms * 0.15f
+            } else {
+                // Slowly adapt upward so steady fan or AC noise is ignored
+                dynamicNoiseFloor = dynamicNoiseFloor * 0.985f + safeRms * 0.015f
+            }
+            dynamicNoiseFloor = dynamicNoiseFloor.coerceIn(-2.0f, 8.0f)
         }
-        dynamicNoiseFloor = dynamicNoiseFloor.coerceIn(-2.0f, 8.0f)
 
         // Estimated dB SPL for UI display (calibrated: quiet room ~32dB, fan ~50dB)
         val splDisplay = (dynamicNoiseFloor * 3.5f + 35.0f).coerceIn(24.0f, 75.0f)
         _backgroundNoiseLevel.value = splDisplay
 
-        // 2. Calculate Signal-to-Noise Ratio (SNR)
-        val snrDb = safeRms - dynamicNoiseFloor
+        // 2. Calculate Signal-to-Noise Ratio (SNR) with sensitivity calibration
+        val snrDb = (safeRms - dynamicNoiseFloor) * sensitivityFactor
+        _liveSnrDb.value = snrDb
+
+        val noiseGateDb = if (isManual) {
+            _noiseGateThresholdDb.value
+        } else {
+            (_noiseGateThresholdDb.value / sensitivityFactor).coerceIn(1.0f, 8.0f)
+        }
+        _effectiveGateThresholdDb.value = noiseGateDb
+
+        val isGateOpen = snrDb > noiseGateDb && safeRms > -2.0f
+        _isNoiseGateOpen.value = isGateOpen
+
+        val dspBadge = _dspHardwareAudit.value.badgeLabel
 
         // If human voice is active, update confidence metric
         if (_isVoiceActive.value) {
@@ -163,14 +221,15 @@ class HumanVoiceActivityDetector(
             _humanVoiceConfidence.value = confidence
         } else {
             // Check if audio level is just ambient noise or potential vocal energy
-            if (snrDb <= 2.5f) {
+            if (!isGateOpen) {
                 // Background noise suppressed by DSP
                 _humanVoiceConfidence.value = 0f
                 if (safeRms > -1.0f) {
-                    _noiseCancellationStatus.value = "DSP Suppressing Ambient Noise (${splDisplay.toInt()}dB)"
+                    _noiseCancellationStatus.value = "$dspBadge: Suppressing Noise (${splDisplay.toInt()}dB)"
                 }
             } else {
                 _humanVoiceConfidence.value = ((snrDb / 10f) * 0.4f + 0.5f).coerceIn(0.5f, 0.85f)
+                _noiseCancellationStatus.value = "Voice Breaking Gate (${snrDb.toInt()}dB SNR)"
             }
         }
     }

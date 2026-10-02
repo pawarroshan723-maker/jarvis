@@ -52,7 +52,7 @@ class GeminiAssistantEngine(private val context: Context? = null) {
     private val _exhaustedModelList = MutableStateFlow<List<String>>(emptyList())
     val exhaustedModelList: StateFlow<List<String>> = _exhaustedModelList.asStateFlow()
 
-    fun recordModelQuotaExhausted(modelId: String, durationMinutes: Long = 15) {
+    fun recordModelQuotaExhausted(modelId: String, durationMinutes: Long = 1) {
         val expiry = System.currentTimeMillis() + (durationMinutes * 60 * 1000)
         modelCooldowns[modelId] = expiry
         // If 3.8 flash reached 25M token quota, dynamic alias gemini-flash-latest also shares this limit
@@ -73,6 +73,13 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         modelCooldowns.remove(modelId)
         updateExhaustedModelList()
         return false
+    }
+
+    fun clearModelCooldown(modelId: String) {
+        modelCooldowns.remove(modelId)
+        if (modelId == "gemini-3.8-flash") modelCooldowns.remove("gemini-flash-latest")
+        if (modelId == "gemini-flash-latest") modelCooldowns.remove("gemini-3.8-flash")
+        updateExhaustedModelList()
     }
 
     fun clearAllCooldowns() {
@@ -221,6 +228,12 @@ class GeminiAssistantEngine(private val context: Context? = null) {
 
         // Determine base cascade across distinct model quota buckets
         val baseCascade = when {
+            selectedTier == GeminiModelTier.CASCADE_PRO -> listOf(
+                ModelConfig("gemini-3.1-pro-preview", "Gemini 3.1 Pro (Flagship Reasoning)", highThinking = true, allowTools = true),
+                ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = true, allowTools = true),
+                ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true),
+                ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true)
+            )
             selectedTier == GeminiModelTier.CASCADE_LITE -> listOf(
                 ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
                 ModelConfig("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", highThinking = false, allowTools = true),
@@ -229,14 +242,15 @@ class GeminiAssistantEngine(private val context: Context? = null) {
             )
             selectedTier == GeminiModelTier.CASCADE_FLASH -> listOf(
                 ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = isHardQuestion, allowTools = true),
-                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = isHardQuestion, allowTools = true),
                 ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = isHardQuestion, allowTools = true),
+                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = isHardQuestion, allowTools = true),
+                ModelConfig("gemini-3.1-pro-preview", "Gemini 3.1 Pro", highThinking = isHardQuestion, allowTools = true),
                 ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
                 ModelConfig("gemini-2.5-flash", "Gemini 2.5 Flash (Safety Fallback)", highThinking = false, allowTools = true)
             )
             selectedTier == GeminiModelTier.AUTO_CASCADE && isHardQuestion -> listOf(
+                ModelConfig("gemini-3.1-pro-preview", "Gemini 3.1 Pro", highThinking = true, allowTools = true),
                 ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = true, allowTools = true),
-                ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = true, allowTools = true),
                 ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = true, allowTools = true),
                 ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = false)
             )
@@ -254,7 +268,8 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 val fallbacks = listOf(
                     ModelConfig("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", highThinking = false, allowTools = true),
                     ModelConfig("gemini-3.5-flash", "Gemini 3.5 Flash", highThinking = false, allowTools = true),
-                    ModelConfig("gemini-3.7-flash", "Gemini 3.7 Flash", highThinking = false, allowTools = true),
+                    ModelConfig("gemini-3.1-pro-preview", "Gemini 3.1 Pro", highThinking = false, allowTools = true),
+                    ModelConfig("gemini-flash-latest", "Gemini Flash Latest", highThinking = false, allowTools = true),
                     ModelConfig("gemini-flash-lite-latest", "Gemini Flash-Lite Latest", highThinking = false, allowTools = true),
                     ModelConfig("gemini-2.5-flash", "Gemini 2.5 Flash", highThinking = false, allowTools = true)
                 ).filter { it.model != selectedTier.modelId }
@@ -311,8 +326,38 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                     return@withContext result.text
                 }
                 is ApiResult.RateLimited -> {
-                    // Activate circuit breaker for this model so future queries skip it immediately
-                    recordModelQuotaExhausted(config.model)
+                    // CRITICAL FIX: If tools (Google Search / Maps) were enabled, the 429 quota exhaustion
+                    // is almost always caused by the SEARCH GROUNDING quota limit on free-tier API keys, NOT the model's token quota!
+                    if (config.allowTools && (useSearch || useMaps)) {
+                        Log.i(TAG, "Search/Maps grounding quota 429 encountered on ${config.model}. Retrying immediately without tools...")
+                        val retryStart = System.currentTimeMillis()
+                        val retryNoTools = executeGeminiRequest(
+                            model = config.model,
+                            apiKey = apiKey,
+                            userQuery = normalizedQuery,
+                            enableHighThinking = config.highThinking,
+                            useSearch = false,
+                            useMaps = false
+                        )
+                        val retryLatency = System.currentTimeMillis() - retryStart
+                        if (retryNoTools is ApiResult.Success) {
+                            attempts.add(ModelAttemptInfo(config.model, "${config.displayName} (Direct)", true, retryLatency))
+                            conversationMemory.addTurn("user", normalizedQuery)
+                            conversationMemory.addTurn("model", retryNoTools.text)
+                            val totalLatency = System.currentTimeMillis() - startTime
+                            _lastExecutionSummary.value = QueryExecutionSummary(
+                                requestedModel = requestedModelName,
+                                resolvedModel = config.displayName,
+                                fallbackOccurred = i > 0,
+                                totalLatencyMs = totalLatency,
+                                attempts = attempts
+                            )
+                            return@withContext retryNoTools.text
+                        }
+                    }
+
+                    // Activate circuit breaker for this model only if pure model request without tools is rate limited
+                    recordModelQuotaExhausted(config.model, durationMinutes = 1)
                     val rateLimitMsg = result.details
                     attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, rateLimitMsg))
                     Log.w(TAG, "Model ${config.model} quota reached. Tripped circuit breaker. Trying next tier...")
@@ -339,22 +384,22 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 is ApiResult.Error -> {
                     attempts.add(ModelAttemptInfo(config.model, config.displayName, false, attemptLatency, "HTTP ${result.code}: ${result.message}"))
                     Log.w(TAG, "Model ${config.model} returned HTTP ${result.code}: ${result.message}")
-                    // If tools caused a 400 error, retry this tier without tools first
-                    if (config.allowTools && (useSearch || useMaps)) {
+                    // If tools or thinking caused an error (e.g. 400), retry this tier with clean baseline parameters
+                    if ((config.allowTools && (useSearch || useMaps)) || config.highThinking) {
                         val retryStart = System.currentTimeMillis()
-                        val retryNoTools = executeGeminiRequest(
+                        val retryBaseline = executeGeminiRequest(
                             model = config.model,
                             apiKey = apiKey,
                             userQuery = normalizedQuery,
-                            enableHighThinking = config.highThinking,
+                            enableHighThinking = false,
                             useSearch = false,
                             useMaps = false
                         )
                         val retryLatency = System.currentTimeMillis() - retryStart
-                        if (retryNoTools is ApiResult.Success) {
-                            attempts.add(ModelAttemptInfo(config.model, "${config.displayName} (No Tools)", true, retryLatency))
+                        if (retryBaseline is ApiResult.Success) {
+                            attempts.add(ModelAttemptInfo(config.model, "${config.displayName} (Baseline)", true, retryLatency))
                             conversationMemory.addTurn("user", normalizedQuery)
-                            conversationMemory.addTurn("model", retryNoTools.text)
+                            conversationMemory.addTurn("model", retryBaseline.text)
                             val totalLatency = System.currentTimeMillis() - startTime
                             _lastExecutionSummary.value = QueryExecutionSummary(
                                 requestedModel = requestedModelName,
@@ -363,7 +408,7 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                                 totalLatencyMs = totalLatency,
                                 attempts = attempts
                             )
-                            return@withContext retryNoTools.text
+                            return@withContext retryBaseline.text
                         }
                     }
                 }
@@ -402,10 +447,37 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         val isMarathiQuery = com.example.voice.MarathiTtsManager.isDevanagari(normalizedQuery) ||
                 com.example.voice.MarathiTtsManager.isMarathiPhrase(normalizedQuery)
 
+        val has403 = attempts.any { it.errorMessage?.contains("403") == true }
+        val has503 = attempts.any { it.errorMessage?.contains("503") == true }
+        val hasNetwork = attempts.any { it.errorMessage?.contains("Unable to resolve") == true || it.errorMessage?.contains("timeout") == true }
+
         return@withContext if (isMarathiQuery) {
-            "क्लाउड कोटा तात्पुरता संपला आहे. मी स्थानिक ऑफलाईन मोडवर कार्यरत आहे, सर. तुम्ही डायग्नोस्टिक्समध्ये तुमची स्वतःची Gemini API Key जोडू शकता."
+            when {
+                has403 -> "API Key अवैध किंवा परवानग्या मर्यादित आहेत. कृपया डायग्नोस्टिक्समध्ये योग्य Gemini API Key तपासा."
+                has503 -> "गुगल सर्व्हरवर सध्या प्रचंड भार आहे. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा."
+                hasNetwork -> "इंटरनेट कनेक्शन उपलब्ध नाही. स्थानिक ऑफलाइन मोड चालू आहे."
+                else -> "क्लाउड मॉडेल दर मर्यादा गाठली आहे. स्थानिक ऑफलाईन मोडवर कार्यरत आहे, सर."
+            }
         } else {
-            "Cloud intelligence rate limit reached across all tiers. Switched to offline protocol, sir. You can configure your own Gemini API key in Diagnostics for dedicated quota."
+            when {
+                has403 -> "Gemini API key is invalid or lacks Generative Language permission. Please verify your API key in Diagnostics."
+                has503 -> "Google Gemini service is temporarily overloaded (HTTP 503). Retrying in a moment, sir."
+                hasNetwork -> "Network connection unavailable. Switched to offline protocol, sir."
+                else -> "All cloud model tiers are temporarily busy (Rate Limit). Switched to offline protocol, sir."
+            }
+        }
+    }
+
+    private fun resolveModelEndpoint(model: String): String {
+        return when (model) {
+            "gemini-3.5-flash-lite", "gemini-3.1-flash-lite" -> "gemini-3.1-flash-lite-preview"
+            "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash" -> "gemini-flash-latest"
+            "cascade_lite" -> "gemini-3.1-flash-lite-preview"
+            "cascade_flash" -> "gemini-flash-latest"
+            "cascade_pro" -> "gemini-3.1-pro-preview"
+            "auto", "auto_cascade" -> "gemini-3.5-flash"
+            "3_1_pro", "gemini-3.1-pro" -> "gemini-3.1-pro-preview"
+            else -> model
         }
     }
 
@@ -418,7 +490,8 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         useMaps: Boolean
     ): ApiResult {
         return try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val resolvedModel = resolveModelEndpoint(model)
+            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$resolvedModel:generateContent"
             val requestJson = JSONObject().apply {
                 // Contents: Multi-turn history preserved with active user query appended
                 val contentsArray = conversationMemory.buildContentsJsonArray(userQuery)
@@ -439,10 +512,17 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 // Generation Config
                 val genConfig = JSONObject()
                 if (enableHighThinking) {
-                    val thinkingObj = JSONObject().apply {
-                        put("thinkingLevel", "HIGH")
+                    if (model.startsWith("gemini-3") || model.contains("flash-latest") || model.contains("preview")) {
+                        val thinkingObj = JSONObject().apply {
+                            put("thinkingLevel", "high")
+                        }
+                        genConfig.put("thinkingConfig", thinkingObj)
+                    } else if (model.startsWith("gemini-2.5")) {
+                        val thinkingObj = JSONObject().apply {
+                            put("thinkingBudget", -1)
+                        }
+                        genConfig.put("thinkingConfig", thinkingObj)
                     }
-                    genConfig.put("thinkingConfig", thinkingObj)
                 }
                 genConfig.put("temperature", 0.7)
                 put("generationConfig", genConfig)
@@ -472,17 +552,17 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 Triple(response.code, response.body?.string() ?: "", response.isSuccessful)
             }
 
-            val isQuotaExhausted = code == 429 ||
-                    responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
-                    responseBody.contains("resource_exhausted", ignoreCase = true) ||
-                    responseBody.contains("quota exceeded", ignoreCase = true)
-
-            if (isQuotaExhausted) {
-                val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
-                return ApiResult.RateLimited(cleanMsg)
-            }
-
             if (!isSuccessful) {
+                val isQuotaExhausted = code == 429 ||
+                        responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                        responseBody.contains("resource_exhausted", ignoreCase = true) ||
+                        responseBody.contains("quota exceeded", ignoreCase = true)
+
+                if (isQuotaExhausted) {
+                    val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
+                    return ApiResult.RateLimited(cleanMsg)
+                }
+
                 val cleanMsg = parseErrorDetails(responseBody, "HTTP $code")
                 return ApiResult.Error(code, cleanMsg)
             }
@@ -556,19 +636,9 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         val targetModel = when (tier) {
             GeminiModelTier.CASCADE_LITE -> "gemini-3.5-flash-lite"
             GeminiModelTier.CASCADE_FLASH -> "gemini-flash-latest"
+            GeminiModelTier.CASCADE_PRO -> "gemini-3.1-pro-preview"
             GeminiModelTier.AUTO_CASCADE -> "gemini-3.5-flash-lite"
             else -> tier.modelId
-        }
-
-        // If known to be in cooldown, immediately notify user
-        if (isModelInCooldown(targetModel)) {
-            return@withContext ModelAttemptInfo(
-                modelId = targetModel,
-                displayName = tier.shortLabel,
-                isSuccess = false,
-                latencyMs = 0,
-                errorMessage = "Quota Exceeded (In Cooldown - Cascades route to Gemini 3.5 Flash & Flash-Lite)"
-            )
         }
 
         val start = System.currentTimeMillis()
@@ -587,9 +657,13 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         }
 
         when (result) {
-            is ApiResult.Success -> ModelAttemptInfo(targetModel, tier.shortLabel, true, latency)
+            is ApiResult.Success -> {
+                // If ping test succeeds, the API key has active quota — unblock all cascades immediately!
+                clearAllCooldowns()
+                ModelAttemptInfo(targetModel, tier.shortLabel, true, latency)
+            }
             is ApiResult.RateLimited -> {
-                recordModelQuotaExhausted(targetModel)
+                recordModelQuotaExhausted(targetModel, durationMinutes = 1)
                 ModelAttemptInfo(
                     targetModel,
                     tier.shortLabel,
@@ -622,7 +696,7 @@ class GeminiAssistantEngine(private val context: Context? = null) {
         apiKey: String
     ): ApiResult {
         return try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
             val requestJson = JSONObject().apply {
                 val contents = JSONArray().apply {
                     put(JSONObject().apply {
@@ -651,16 +725,16 @@ class GeminiAssistantEngine(private val context: Context? = null) {
                 Triple(response.code, response.body?.string() ?: "", response.isSuccessful)
             }
 
-            val isQuotaExhausted = code == 429 ||
-                    responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
-                    responseBody.contains("resource_exhausted", ignoreCase = true) ||
-                    responseBody.contains("quota exceeded", ignoreCase = true)
-
-            if (isQuotaExhausted) {
-                val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
-                return ApiResult.RateLimited(cleanMsg)
-            }
             if (!isSuccessful) {
+                val isQuotaExhausted = code == 429 ||
+                        responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                        responseBody.contains("resource_exhausted", ignoreCase = true) ||
+                        responseBody.contains("quota exceeded", ignoreCase = true)
+
+                if (isQuotaExhausted) {
+                    val cleanMsg = parseErrorDetails(responseBody, "429 Quota Exceeded")
+                    return ApiResult.RateLimited(cleanMsg)
+                }
                 val cleanMsg = parseErrorDetails(responseBody, "HTTP $code")
                 return ApiResult.Error(code, cleanMsg)
             }

@@ -22,6 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.example.ui.JarvisViewModel
@@ -44,11 +47,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
 
-        // Check user preference for lockscreen display
+        // Check user preference for lockscreen display (default false for privacy)
         val prefs = getSharedPreferences("jarvis_system_prefs", Context.MODE_PRIVATE)
-        val showAboveLockscreen = prefs.getBoolean("key_show_above_lockscreen", true)
+        val showAboveLockscreen = prefs.getBoolean("key_show_above_lockscreen", false)
 
         if (showAboveLockscreen) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -72,7 +78,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        viewModel.onAppDestroyed()
+        if (isFinishing && !isChangingConfigurations) {
+            viewModel.onAppDestroyed()
+        }
     }
 }
 
@@ -140,6 +148,23 @@ fun MainAppContent(viewModel: JarvisViewModel) {
     val currentPlayingTrack by viewModel.currentPlayingTrack.collectAsState()
     val isLocalPlayerActive by viewModel.isLocalPlayerActive.collectAsState()
     val exhaustedModelList by viewModel.exhaustedModelList.collectAsState()
+    val speechRate by viewModel.speechRate.collectAsState()
+    val speechPitch by viewModel.speechPitch.collectAsState()
+    val micSensitivity by viewModel.micSensitivity.collectAsState()
+    val noiseGateThresholdDb by viewModel.noiseGateThresholdDb.collectAsState()
+    val isManualNoiseGate by viewModel.isManualNoiseGate.collectAsState()
+    val liveSnrDb by viewModel.liveSnrDb.collectAsState()
+    val effectiveGateThresholdDb by viewModel.effectiveGateThresholdDb.collectAsState()
+    val isNoiseGateOpen by viewModel.isNoiseGateOpen.collectAsState()
+    val dspHardwareAudit by viewModel.dspHardwareAudit.collectAsState()
+    val isCallSuspended by viewModel.isCallSuspended.collectAsState()
+    val isExternalMediaPlaying by viewModel.isExternalMediaPlaying.collectAsState()
+    val mediaHandsFreeMode by viewModel.mediaHandsFreeMode.collectAsState()
+    val accessibilityConfig by viewModel.accessibilityConfig.collectAsState()
+    val showAccessibilityDialog by viewModel.showAccessibilityDialog.collectAsState()
+    val isAccessibilityServiceActive by viewModel.isAccessibilityServiceActive.collectAsState()
+
+    var showCommandsHelpDialog by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -319,7 +344,12 @@ fun MainAppContent(viewModel: JarvisViewModel) {
                 onCycleLanguage = { viewModel.cycleVoiceLanguage() },
                 selectedModelTier = selectedModelTier,
                 onCycleModelTier = { viewModel.cycleSelectedModelTier() },
-                isAutoFallbackEnabled = isAutoFallbackEnabled
+                isAutoFallbackEnabled = isAutoFallbackEnabled,
+                dspHardwareAudit = dspHardwareAudit,
+                onOpenDiagnostics = { viewModel.setDiagnosticsDialogVisible(true) },
+                onOpenCommandsHelp = { showCommandsHelpDialog = true },
+                accessibilityConfig = accessibilityConfig,
+                onOpenAccessibility = { viewModel.setAccessibilityDialogVisible(true) }
             )
         },
         bottomBar = {
@@ -375,7 +405,26 @@ fun MainAppContent(viewModel: JarvisViewModel) {
                     onSelectModelTier = { viewModel.setSelectedModelTier(it) },
                     isAutoFallbackEnabled = isAutoFallbackEnabled,
                     onToggleAutoFallback = { viewModel.setAutoFallbackEnabled(it) },
-                    lastExecutionSummary = lastExecutionSummary
+                    lastExecutionSummary = lastExecutionSummary,
+                    speechRate = speechRate,
+                    onSetSpeechRate = { viewModel.setSpeechRate(it) },
+                    speechPitch = speechPitch,
+                    onSetSpeechPitch = { viewModel.setSpeechPitch(it) },
+                    micSensitivity = micSensitivity,
+                    onSetMicSensitivity = { viewModel.setMicSensitivity(it) },
+                    noiseGateThresholdDb = noiseGateThresholdDb,
+                    onSetNoiseGateThresholdDb = { threshold, isManual -> viewModel.setNoiseGateThresholdDb(threshold, isManual) },
+                    isManualNoiseGate = isManualNoiseGate,
+                    onSetNoiseGateMode = { viewModel.setNoiseGateMode(it) },
+                    liveSnrDb = liveSnrDb,
+                    effectiveGateThresholdDb = effectiveGateThresholdDb,
+                    isNoiseGateOpen = isNoiseGateOpen,
+                    dspHardwareAudit = dspHardwareAudit,
+                    isCallSuspended = isCallSuspended,
+                    isExternalMediaPlaying = isExternalMediaPlaying,
+                    mediaHandsFreeMode = mediaHandsFreeMode,
+                    onToggleMediaHandsFreeMode = { viewModel.toggleMediaHandsFreeMode() },
+                    onOpenCommandsHelp = { showCommandsHelpDialog = true }
                 )
 
                 1 -> SystemCommsScreen(
@@ -512,7 +561,57 @@ fun MainAppContent(viewModel: JarvisViewModel) {
                     isTestingModel = isTestingModel,
                     onTestModel = { viewModel.testModel(it) },
                     exhaustedModels = exhaustedModelList,
-                    onResetCooldowns = { viewModel.clearModelQuotaCooldowns() }
+                    onResetCooldowns = { viewModel.clearModelQuotaCooldowns() },
+                    speechRate = speechRate,
+                    onSetSpeechRate = { viewModel.setSpeechRate(it) },
+                    speechPitch = speechPitch,
+                    onSetSpeechPitch = { viewModel.setSpeechPitch(it) },
+                    micSensitivity = micSensitivity,
+                    onSetMicSensitivity = { viewModel.setMicSensitivity(it) },
+                    noiseGateThresholdDb = noiseGateThresholdDb,
+                    onSetNoiseGateThresholdDb = { threshold, isManual -> viewModel.setNoiseGateThresholdDb(threshold, isManual) },
+                    isManualNoiseGate = isManualNoiseGate,
+                    onSetNoiseGateMode = { viewModel.setNoiseGateMode(it) },
+                    liveSnrDb = liveSnrDb,
+                    effectiveGateThresholdDb = effectiveGateThresholdDb,
+                    isNoiseGateOpen = isNoiseGateOpen,
+                    backgroundNoiseLevel = backgroundNoiseLevel,
+                    currentRmsDb = audioRms,
+                    dspHardwareAudit = dspHardwareAudit,
+                    onRefreshDspAudit = { viewModel.refreshDspHardwareAudit() }
+                )
+            }
+
+            // Voice Command Center & Help Menu Dialog
+            if (showCommandsHelpDialog) {
+                com.example.ui.dialogs.VoiceCommandsHelpDialog(
+                    selectedLanguage = selectedLanguage,
+                    onDismiss = { showCommandsHelpDialog = false },
+                    onExecuteCommand = { cmd ->
+                        viewModel.submitVoiceCommand(cmd)
+                    },
+                    onSpeakExample = { text ->
+                        viewModel.speak(text)
+                    }
+                )
+            }
+
+            // Accessibility Settings & Accommodations Dialog
+            if (showAccessibilityDialog) {
+                com.example.ui.dialogs.AccessibilitySettingsDialog(
+                    config = accessibilityConfig,
+                    selectedLanguage = selectedLanguage,
+                    isAccessibilityServiceActive = isAccessibilityServiceActive,
+                    onOpenAccessibilitySettings = { viewModel.openAccessibilitySettings() },
+                    onTriggerGlobalAction = { viewModel.triggerGlobalAction(it) },
+                    onDismiss = { viewModel.setAccessibilityDialogVisible(false) },
+                    onToggleHighContrast = { viewModel.toggleHighContrast(it) },
+                    onToggleLargeText = { viewModel.toggleLargeText(it) },
+                    onToggleHapticFeedback = { viewModel.toggleHapticFeedback(it) },
+                    onToggleTalkBackAnnouncements = { viewModel.toggleTalkBackAnnouncements(it) },
+                    onToggleTouchTargetExpanded = { viewModel.toggleTouchTargetExpanded(it) },
+                    onToggleVoiceFirstMode = { viewModel.toggleVoiceFirstMode(it) },
+                    onTestFeedback = { viewModel.testAccessibilityFeedback() }
                 )
             }
         }

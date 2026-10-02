@@ -51,7 +51,18 @@ class JarvisSpeechManager(
         private const val PREFS_NAME = "jarvis_voice_prefs"
         private const val KEY_LANG = "voice_language_mode"
         private const val KEY_MIC_MODE = "voice_mic_always_on_mode"
+        private const val KEY_MEDIA_HANDS_FREE = "voice_media_hands_free_mode"
         private const val KEY_WAKE_WORD_LOCK = "jarvis_wake_word_lock"
+        private const val KEY_SPEECH_RATE = "jarvis_speech_rate"
+        private const val KEY_SPEECH_PITCH = "jarvis_speech_pitch"
+        private const val KEY_MIC_SENSITIVITY = "jarvis_mic_sensitivity"
+        private const val KEY_NOISE_GATE_THRESHOLD = "jarvis_noise_gate_threshold_db"
+        private const val KEY_NOISE_GATE_MANUAL = "jarvis_noise_gate_manual"
+
+        const val DEFAULT_SPEECH_RATE = 1.0f
+        const val DEFAULT_SPEECH_PITCH = 1.20f // Feminine / woman voice baseline
+        const val DEFAULT_MIC_SENSITIVITY = 1.0f
+        const val DEFAULT_NOISE_GATE_THRESHOLD = 3.0f
 
     // Exact 2-second silence countdown before dispatching words
         const val SILENCE_STOP_INTERVAL_MILLIS = 2000L
@@ -100,8 +111,20 @@ class JarvisSpeechManager(
     private val _micAlwaysOnMode = MutableStateFlow(loadSavedMicMode())
     val micAlwaysOnMode: StateFlow<MicAlwaysOnMode> = _micAlwaysOnMode.asStateFlow()
 
+    private val _mediaHandsFreeMode = MutableStateFlow(loadSavedMediaHandsFreeMode())
+    val mediaHandsFreeMode: StateFlow<MediaHandsFreeMode> = _mediaHandsFreeMode.asStateFlow()
+
     private val _isWakeWordLockActive = MutableStateFlow(loadSavedWakeWordLock())
     val isWakeWordLockActive: StateFlow<Boolean> = _isWakeWordLockActive.asStateFlow()
+
+    private val _speechRate = MutableStateFlow(loadSavedSpeechRate())
+    val speechRate: StateFlow<Float> = _speechRate.asStateFlow()
+
+    private val _speechPitch = MutableStateFlow(loadSavedSpeechPitch())
+    val speechPitch: StateFlow<Float> = _speechPitch.asStateFlow()
+
+    private val _micSensitivity = MutableStateFlow(loadSavedMicSensitivity())
+    val micSensitivity: StateFlow<Float> = _micSensitivity.asStateFlow()
 
     private val _isTemporarilyUnlocked = MutableStateFlow(false)
     val isTemporarilyUnlocked: StateFlow<Boolean> = _isTemporarilyUnlocked.asStateFlow()
@@ -128,6 +151,14 @@ class JarvisSpeechManager(
     val isNoiseSuppressorActive: StateFlow<Boolean> = voiceActivityDetector.isNoiseSuppressorActive
     val noiseCancellationStatus: StateFlow<String> = voiceActivityDetector.noiseCancellationStatus
 
+    // Noise dB Sensitivity & Manual Control Flows
+    val noiseGateThresholdDb: StateFlow<Float> = voiceActivityDetector.noiseGateThresholdDb
+    val isManualNoiseGate: StateFlow<Boolean> = voiceActivityDetector.isManualNoiseGate
+    val liveSnrDb: StateFlow<Float> = voiceActivityDetector.liveSnrDb
+    val effectiveGateThresholdDb: StateFlow<Float> = voiceActivityDetector.effectiveGateThresholdDb
+    val isNoiseGateOpen: StateFlow<Boolean> = voiceActivityDetector.isNoiseGateOpen
+    val dspHardwareAudit: StateFlow<DspHardwareAudit> = voiceActivityDetector.dspHardwareAudit
+
     // 2-Second Silence Buffer Management
     private val speechBuffer = StringBuilder()
     private var isSpeechActive = false
@@ -136,6 +167,18 @@ class JarvisSpeechManager(
     private var isContinuousRestartScheduled = false
     private var isDestroyed = false
     private var isRecognizerActive = false
+    private var isPromptedSession = false
+
+    // Media & Phone Call Coexistence State Flows
+    private val _isCallSuspended = MutableStateFlow(false)
+    val isCallSuspended: StateFlow<Boolean> = _isCallSuspended.asStateFlow()
+
+    private val _isExternalMediaPlaying = MutableStateFlow(false)
+    val isExternalMediaPlaying: StateFlow<Boolean> = _isExternalMediaPlaying.asStateFlow()
+
+    private var mediaResumeRunnable: Runnable? = null
+    private var callResumeRunnable: Runnable? = null
+    private var audioPlaybackCallback: Any? = null
 
     // Anti-stalling watchdog timer: only runs while LISTENING in continuous mode
     private val watchdogRunnable = object : Runnable {
@@ -143,6 +186,15 @@ class JarvisSpeechManager(
             if (isDestroyed) return
             try {
                 if (isContinuousModeActive() && _speechState.value == SpeechState.LISTENING) {
+                    if (isCallActive() || (isExternalMediaActive() && _mediaHandsFreeMode.value == MediaHandsFreeMode.MUSIC_PRIORITY_SMART_PAUSE)) {
+                        Log.d(TAG, "Watchdog: Call or external media active (Music Priority). Halting recognizer session.")
+                        try {
+                            speechRecognizer?.cancel()
+                        } catch (ignored: Exception) {}
+                        _speechState.value = SpeechState.IDLE
+                        if (isCallActive()) scheduleCallResumeCheck() else scheduleMediaResumeCheck()
+                        return
+                    }
                     if (!isRecognizerActive) {
                         Log.d(TAG, "Watchdog: Recognizer idle while LISTENING. Refreshing session...")
                         startRecognizerSession()
@@ -172,6 +224,80 @@ class JarvisSpeechManager(
     private fun loadSavedWakeWordLock(): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getBoolean(KEY_WAKE_WORD_LOCK, false) // Default to Open Mic mode for immediate out-of-the-box command recognition
+    }
+
+    private fun loadSavedSpeechRate(): Float {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getFloat(KEY_SPEECH_RATE, DEFAULT_SPEECH_RATE).coerceIn(0.5f, 2.0f)
+    }
+
+    private fun loadSavedSpeechPitch(): Float {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getFloat(KEY_SPEECH_PITCH, DEFAULT_SPEECH_PITCH).coerceIn(0.5f, 2.0f)
+    }
+
+    private fun loadSavedMicSensitivity(): Float {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getFloat(KEY_MIC_SENSITIVITY, DEFAULT_MIC_SENSITIVITY).coerceIn(0.5f, 2.5f)
+    }
+
+    fun setSpeechRate(rate: Float) {
+        val safe = rate.coerceIn(0.5f, 2.0f)
+        _speechRate.value = safe
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putFloat(KEY_SPEECH_RATE, safe).apply()
+        textToSpeech?.setSpeechRate(safe)
+        Log.i(TAG, "Jarvis Speech Rate set to: $safe")
+    }
+
+    fun setSpeechPitch(pitch: Float) {
+        val safe = pitch.coerceIn(0.5f, 2.0f)
+        _speechPitch.value = safe
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putFloat(KEY_SPEECH_PITCH, safe).apply()
+        textToSpeech?.setPitch(safe)
+        Log.i(TAG, "Jarvis Speech Pitch set to: $safe")
+    }
+
+    fun setMicSensitivity(sensitivity: Float) {
+        val safe = sensitivity.coerceIn(0.5f, 2.5f)
+        _micSensitivity.value = safe
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putFloat(KEY_MIC_SENSITIVITY, safe).apply()
+        voiceActivityDetector.setSensitivity(safe)
+        Log.i(TAG, "Jarvis Mic Sensitivity set to: $safe")
+    }
+
+    fun setNoiseGateThresholdDb(thresholdDb: Float, isManual: Boolean = true) {
+        val safe = thresholdDb.coerceIn(1.0f, 15.0f)
+        voiceActivityDetector.setNoiseGateThresholdDb(safe, isManual)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putFloat(KEY_NOISE_GATE_THRESHOLD, safe)
+            .putBoolean(KEY_NOISE_GATE_MANUAL, isManual)
+            .apply()
+        Log.i(TAG, "Noise Gate Threshold set to: ${safe}dB (manual: $isManual)")
+    }
+
+    fun setNoiseGateMode(isManual: Boolean) {
+        voiceActivityDetector.setNoiseGateMode(isManual)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_NOISE_GATE_MANUAL, isManual).apply()
+        Log.i(TAG, "Noise Gate mode set to: manual = $isManual")
+    }
+
+    fun runDspHardwareAudit(): DspHardwareAudit {
+        return voiceActivityDetector.checkHardwareDsp()
+    }
+
+    private fun loadSavedNoiseGateThreshold(): Float {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getFloat(KEY_NOISE_GATE_THRESHOLD, DEFAULT_NOISE_GATE_THRESHOLD).coerceIn(1.0f, 15.0f)
+    }
+
+    private fun loadSavedIsManualNoiseGate(): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_NOISE_GATE_MANUAL, false)
     }
 
     fun setWakeWordLock(enabled: Boolean) {
@@ -208,6 +334,8 @@ class JarvisSpeechManager(
      */
     fun extractWakeWordAndCommand(raw: String): Pair<Boolean, String> {
         val clean = raw.trim()
+        if (clean.isBlank()) return Pair(false, "")
+
         val lower = clean.lowercase(Locale.ROOT)
             .replace(Regex("""[^\p{L}\p{M}\p{Nd}\s]"""), " ")
             .replace(Regex("""\s+"""), " ")
@@ -216,25 +344,29 @@ class JarvisSpeechManager(
         val wakePrefixes = listOf(
             "hey jarvis", "हे जार्व्हिस", "हे जार्विस", "हे झार्व्हिस", "ok jarvis", "ओके जार्व्हिस",
             "hi jarvis", "हाय जार्व्हिस", "jarvis please", "jarvis", "जार्व्हिस", "जार्विस", "जॉर्विस",
-            "झार्व्हिस", "झार्विस", "जाविस", "सर्व्हिस", "jarvish", "javis", "jarves", "dharvis"
+            "झार्व्हिस", "झार्विस", "जाविस", "jarvish", "javis", "jarves", "dharvis"
         )
 
-        // 1. Direct exact wake word call (e.g. "Jarvis" or "Hey Jarvis")
         for (prefix in wakePrefixes) {
             if (lower == prefix) {
                 return Pair(true, "")
             }
         }
 
-        // 2. Starts with wake word prefix (e.g. "Jarvis play Arijit Singh")
         for (prefix in wakePrefixes) {
             if (lower.startsWith("$prefix ")) {
-                val remainder = clean.substring(minOf(prefix.length, clean.length)).trim()
-                return Pair(true, remainder)
+                val cleaned = clean.replaceFirst(
+                    Regex("""^(?:[^\p{L}\p{M}\p{Nd}]*)${Regex.escape(prefix)}[^\p{L}\p{M}\p{Nd}]*""", RegexOption.IGNORE_CASE),
+                    ""
+                ).trim()
+                if (cleaned.isNotBlank() && cleaned != clean) {
+                    return Pair(true, cleaned)
+                }
+                val lowerRemainder = lower.substring(prefix.length).trim()
+                return Pair(true, lowerRemainder)
             }
         }
 
-        // 3. Contains wake word anywhere in the utterance
         for (prefix in wakePrefixes) {
             if (lower.contains(prefix)) {
                 val cleanedCommand = clean.replace(Regex("(?i)\\b$prefix\\b"), "").trim()
@@ -296,6 +428,44 @@ class JarvisSpeechManager(
             MicAlwaysOnMode.MANUAL -> MicAlwaysOnMode.ALWAYS_ON_SCREEN_OFF_AND_ON
         }
         setMicAlwaysOnMode(next)
+        return next
+    }
+
+    private fun loadSavedMediaHandsFreeMode(): MediaHandsFreeMode {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val code = prefs.getString(KEY_MEDIA_HANDS_FREE, MediaHandsFreeMode.AUDIO_DUCKING_HANDS_FREE.code)
+        return MediaHandsFreeMode.fromCode(code)
+    }
+
+    fun setMediaHandsFreeMode(mode: MediaHandsFreeMode) {
+        _mediaHandsFreeMode.value = mode
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_MEDIA_HANDS_FREE, mode.code).apply()
+        Log.i(TAG, "Media Hands-Free mode set to: ${mode.title}")
+
+        if (mode == MediaHandsFreeMode.AUDIO_DUCKING_HANDS_FREE) {
+            mediaResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+            if (isContinuousModeActive() && !isCallActive() && !isDestroyed) {
+                startListening(promptForSpeech = false)
+            }
+        } else {
+            if (isExternalMediaActive()) {
+                try {
+                    speechRecognizer?.cancel()
+                } catch (ignored: Exception) {}
+                _speechState.value = SpeechState.IDLE
+                scheduleMediaResumeCheck()
+            }
+        }
+    }
+
+    fun toggleMediaHandsFreeMode(): MediaHandsFreeMode {
+        val next = if (_mediaHandsFreeMode.value == MediaHandsFreeMode.AUDIO_DUCKING_HANDS_FREE) {
+            MediaHandsFreeMode.MUSIC_PRIORITY_SMART_PAUSE
+        } else {
+            MediaHandsFreeMode.AUDIO_DUCKING_HANDS_FREE
+        }
+        setMediaHandsFreeMode(next)
         return next
     }
 
@@ -454,6 +624,156 @@ class JarvisSpeechManager(
         return next
     }
 
+    fun isCallActive(): Boolean {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            val mode = am?.mode ?: android.media.AudioManager.MODE_NORMAL
+            if (mode == android.media.AudioManager.MODE_IN_CALL ||
+                mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+                mode == android.media.AudioManager.MODE_RINGTONE
+            ) {
+                return true
+            }
+
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
+            val callState = tm?.callState ?: android.telephony.TelephonyManager.CALL_STATE_IDLE
+            if (callState != android.telephony.TelephonyManager.CALL_STATE_IDLE) {
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking call status: ${e.message}")
+        }
+        return false
+    }
+
+    fun isExternalMediaActive(): Boolean {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return false
+            if (!am.isMusicActive) return false
+
+            // Exclude Jarvis's own TTS speech and cooldown window
+            if (isTtsSpeaking || System.currentTimeMillis() < ttsAudioCooldownUntil) return false
+
+            // Exclude Jarvis's internal media player
+            val app = context.applicationContext as? com.example.JarvisApplication
+            val isInternalPlaying = app?.hardwareController?.audioPlayer?.isPlaying?.value == true
+            if (isInternalPlaying) return false
+
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking external media: ${e.message}")
+            return false
+        }
+    }
+
+    fun onCallStateChanged(state: Int) {
+        runOnMainThread {
+            when (state) {
+                android.telephony.TelephonyManager.CALL_STATE_RINGING,
+                android.telephony.TelephonyManager.CALL_STATE_OFFHOOK -> {
+                    Log.i(TAG, "Call detected (state=$state). Yielding microphone & speaker 100% to calling app.")
+                    _isCallSuspended.value = true
+                    try {
+                        speechRecognizer?.stopListening()
+                        speechRecognizer?.cancel()
+                    } catch (ignored: Exception) {}
+                    _speechState.value = SpeechState.IDLE
+                    _audioRms.value = 0f
+                    scheduleCallResumeCheck()
+                }
+                android.telephony.TelephonyManager.CALL_STATE_IDLE -> {
+                    Log.i(TAG, "Call ended (state=IDLE). Checking to resume mic mode.")
+                    _isCallSuspended.value = false
+                    mainHandler.postDelayed({
+                        if (isContinuousModeActive() && !isCallActive() && !isDestroyed) {
+                            if (!isExternalMediaActive()) {
+                                startListening(promptForSpeech = false)
+                            } else {
+                                scheduleMediaResumeCheck()
+                            }
+                        }
+                    }, 800L)
+                }
+            }
+        }
+    }
+
+    private fun scheduleMediaResumeCheck() {
+        if (!isContinuousModeActive() || isDestroyed) return
+        mediaResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            if (!isContinuousModeActive() || isDestroyed) return@Runnable
+            if (isExternalMediaActive()) {
+                // Media (e.g. YouTube) is still actively playing, check again in 1500ms
+                scheduleMediaResumeCheck()
+            } else {
+                Log.i(TAG, "External media/YouTube stopped playing; automatically resuming continuous mic mode.")
+                _isExternalMediaPlaying.value = false
+                if (!isCallActive() && _speechState.value != SpeechState.SPEAKING && _speechState.value != SpeechState.PROCESSING) {
+                    startListening(promptForSpeech = false)
+                }
+            }
+        }
+        mediaResumeRunnable = r
+        mainHandler.postDelayed(r, 1500L)
+    }
+
+    private fun scheduleCallResumeCheck() {
+        if (!isContinuousModeActive() || isDestroyed) return
+        callResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            if (!isContinuousModeActive() || isDestroyed) return@Runnable
+            if (isCallActive()) {
+                // Call still in progress, check again in 1500ms
+                scheduleCallResumeCheck()
+            } else {
+                Log.i(TAG, "Phone/VoIP call ended; automatically resuming continuous mic mode.")
+                _isCallSuspended.value = false
+                if (!isExternalMediaActive() && _speechState.value != SpeechState.SPEAKING && _speechState.value != SpeechState.PROCESSING) {
+                    startListening(promptForSpeech = false)
+                } else if (isExternalMediaActive()) {
+                    scheduleMediaResumeCheck()
+                }
+            }
+        }
+        callResumeRunnable = r
+        mainHandler.postDelayed(r, 1500L)
+    }
+
+    private fun checkAndHandleMediaPlaybackChange(configs: List<android.media.AudioPlaybackConfiguration>?) {
+        if (!isContinuousModeActive() || isDestroyed) return
+        val isMusicNow = isExternalMediaActive()
+
+        if (isMusicNow) {
+            _isExternalMediaPlaying.value = true
+            if (_mediaHandsFreeMode.value == MediaHandsFreeMode.MUSIC_PRIORITY_SMART_PAUSE) {
+                // If we are currently in an unprompted background listening session, yield immediately
+                if (!isPromptedSession && _speechState.value == SpeechState.LISTENING) {
+                    Log.i(TAG, "External media/YouTube started playing (Music Priority). Yielding mic & audio focus immediately so song plays without interruption.")
+                    try {
+                        speechRecognizer?.cancel()
+                    } catch (ignored: Exception) {}
+                    _speechState.value = SpeechState.IDLE
+                    _audioRms.value = 0f
+                    scheduleMediaResumeCheck()
+                }
+            } else {
+                // In AUDIO_DUCKING_HANDS_FREE, ensure audio ducking is held so YouTube lowers volume and mic keeps listening
+                requestTransientAudioFocusDucking()
+            }
+        } else {
+            if (_isExternalMediaPlaying.value) {
+                Log.i(TAG, "External media/YouTube finished playing. Resuming continuous mic mode.")
+                _isExternalMediaPlaying.value = false
+                mainHandler.postDelayed({
+                    if (isContinuousModeActive() && !isCallActive() && !isExternalMediaActive() && !isDestroyed) {
+                        startListening(promptForSpeech = false)
+                    }
+                }, 400L)
+            }
+        }
+    }
+
     private fun runOnMainThread(action: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             action()
@@ -466,6 +786,28 @@ class JarvisSpeechManager(
         runOnMainThread {
             initSpeechRecognizer()
             textToSpeech = TextToSpeech(context, this)
+            voiceActivityDetector.setSensitivity(_micSensitivity.value)
+            voiceActivityDetector.setNoiseGateThresholdDb(
+                loadSavedNoiseGateThreshold(),
+                loadSavedIsManualNoiseGate()
+            )
+
+            // Register AudioPlaybackCallback on Android O+ for instantaneous media playback detection (e.g. YouTube)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                try {
+                    val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    val cb = object : android.media.AudioManager.AudioPlaybackCallback() {
+                        override fun onPlaybackConfigChanged(configs: List<android.media.AudioPlaybackConfiguration>) {
+                            checkAndHandleMediaPlaybackChange(configs)
+                        }
+                    }
+                    audioPlaybackCallback = cb
+                    am?.registerAudioPlaybackCallback(cb, mainHandler)
+                    Log.i(TAG, "AudioPlaybackCallback registered for YouTube & external media coexistence")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not register AudioPlaybackCallback: ${e.message}")
+                }
+            }
 
             // Register screen state receiver including user unlock
             try {
@@ -557,7 +899,15 @@ class JarvisSpeechManager(
         if (status == TextToSpeech.SUCCESS) {
             isTtsReady = true
             textToSpeech?.let { tts ->
-                MarathiTtsManager.prepareAndConfigureTts(tts, "Jarvis", _selectedLanguage.value)
+                MarathiTtsManager.prepareAndConfigureTts(
+                    tts,
+                    "Jarvis",
+                    _selectedLanguage.value,
+                    _speechRate.value,
+                    _speechPitch.value
+                )
+                tts.setPitch(_speechPitch.value)
+                tts.setSpeechRate(_speechRate.value)
 
                 tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -658,8 +1008,8 @@ class JarvisSpeechManager(
                         .replace(Regex("""\s+"""), " ")
                         .trim()
 
-                    // Exact match or full containment within 2.5 seconds of TTS finishing
-                    if (cleanCandidate == cleanUtterance || (cleanUtterance.length > 5 && cleanCandidate == cleanUtterance)) {
+                    // Exact match or containment within 2.5 seconds of TTS finishing
+                    if (cleanCandidate == cleanUtterance || (cleanUtterance.length > 5 && (cleanUtterance.contains(cleanCandidate) || cleanCandidate.contains(cleanUtterance)))) {
                         Log.i(TAG, "[EchoGuard] Matched recent TTS speech: '$candidate' (spoken ${timeSinceSpeech}ms ago)")
                         return true
                     }
@@ -697,7 +1047,49 @@ class JarvisSpeechManager(
     /**
      * Starts listening cleanly. Solves voice client binding and mic flutter issues.
      */
+    fun ensureReady() {
+        if (isDestroyed) {
+            isDestroyed = false
+        }
+        if (textToSpeech == null) {
+            try {
+                textToSpeech = TextToSpeech(context.applicationContext, this)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to instantiate TextToSpeech", e)
+            }
+        }
+        if (speechRecognizer == null) {
+            initSpeechRecognizer()
+        }
+    }
+
     fun startListening(promptForSpeech: Boolean = false): Boolean {
+        ensureReady()
+
+        // If a call is active, preserve 100% of mic & speaker for the calling app
+        if (isCallActive()) {
+            Log.i(TAG, "Cannot start mic: Call active (MODE_IN_CALL / MODE_IN_COMMUNICATION). Preserving call audio.")
+            _isCallSuspended.value = true
+            _speechState.value = SpeechState.IDLE
+            scheduleCallResumeCheck()
+            return false
+        }
+
+        // If external media (YouTube, Spotify) is playing and this is an unprompted background loop restart:
+        if (!promptForSpeech && isExternalMediaActive()) {
+            if (_mediaHandsFreeMode.value == MediaHandsFreeMode.MUSIC_PRIORITY_SMART_PAUSE) {
+                Log.d(TAG, "External media/YouTube is playing with Music Priority. Pausing continuous loop to avoid pause/play flapping.")
+                _isExternalMediaPlaying.value = true
+                _speechState.value = SpeechState.IDLE
+                scheduleMediaResumeCheck()
+                return false
+            } else {
+                Log.d(TAG, "External media is playing in Hands-Free Ducking mode. Retaining mic with audio ducking.")
+                _isExternalMediaPlaying.value = true
+                requestTransientAudioFocusDucking()
+            }
+        }
+
         runOnMainThread {
             if (isDestroyed) return@runOnMainThread
 
@@ -708,6 +1100,7 @@ class JarvisSpeechManager(
             cancelProcessingWatchdog()
 
             try {
+                isPromptedSession = promptForSpeech
                 isContinuousRestartScheduled = false
                 _recognitionError.value = null
                 _speechState.value = SpeechState.LISTENING
@@ -716,6 +1109,10 @@ class JarvisSpeechManager(
                     speechBuffer.clear()
                     isSpeechActive = false
                     armTemporaryUnlock(15000L)
+                    // If user manually tapped mic while YouTube is playing, request ducking so music lowers instead of pausing
+                    if (isExternalMediaActive()) {
+                        requestTransientAudioFocusDucking()
+                    }
                 }
 
                 voiceActivityDetector.startVadStream()
@@ -726,7 +1123,7 @@ class JarvisSpeechManager(
                     mainHandler.removeCallbacks(watchdogRunnable)
                     mainHandler.postDelayed(watchdogRunnable, WATCHDOG_CHECK_INTERVAL_MILLIS)
                 }
-                Log.d(TAG, "Mic started with Human Voice Detection & Background Noise Cancellation Active (prompt=$promptForSpeech)")
+                Log.d(TAG, "Mic started with Human Voice Detection & Noise Cancellation (prompt=$promptForSpeech, mediaActive=${isExternalMediaActive()})")
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting speech recognition: ${e.message}", e)
                 _speechState.value = if (isContinuousModeActive()) SpeechState.LISTENING else SpeechState.IDLE
@@ -741,6 +1138,26 @@ class JarvisSpeechManager(
         if (isTtsSpeaking || System.currentTimeMillis() < ttsAudioCooldownUntil ||
             _speechState.value == SpeechState.SPEAKING || _speechState.value == SpeechState.PROCESSING
         ) return
+
+        if (isCallActive()) {
+            Log.d(TAG, "Recognizer session aborted: call is active")
+            _isCallSuspended.value = true
+            _speechState.value = SpeechState.IDLE
+            scheduleCallResumeCheck()
+            return
+        }
+
+        if (!isPromptedSession && isExternalMediaActive()) {
+            if (_mediaHandsFreeMode.value == MediaHandsFreeMode.MUSIC_PRIORITY_SMART_PAUSE) {
+                Log.d(TAG, "Recognizer session aborted: external media is active and Music Priority mode selected")
+                _isExternalMediaPlaying.value = true
+                _speechState.value = SpeechState.IDLE
+                scheduleMediaResumeCheck()
+                return
+            } else {
+                requestTransientAudioFocusDucking()
+            }
+        }
 
         try {
             if (speechRecognizer == null) {
@@ -773,13 +1190,42 @@ class JarvisSpeechManager(
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                // Disables Google Speech Recognizer default start/stop chime sound in continuous dictation mode
+                putExtra("android.speech.extra.DICTATION_MODE", true)
             }
 
             isRecognizerActive = true
+            if (isContinuousModeActive()) {
+                suppressRecognizerBeepSound()
+            }
             speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
             Log.w(TAG, "Could not start in-app recognizer session: ${e.message}")
             isRecognizerActive = false
+        }
+    }
+
+    /**
+     * Suppresses Google Speech Recognizer's default start-listening system chime beep during continuous loop restarts.
+     */
+    private fun suppressRecognizerBeepSound() {
+        if (!isContinuousModeActive()) return
+        if (isCallActive() || isExternalMediaActive()) return
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+            // Temporarily mute system & notification audio streams so startListening chime is silent
+            audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_SYSTEM, android.media.AudioManager.ADJUST_MUTE, 0)
+            audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION, android.media.AudioManager.ADJUST_MUTE, 0)
+
+            // Re-enable stream volumes after 400ms once SpeechRecognizer session initialization completes silently
+            mainHandler.postDelayed({
+                try {
+                    audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_SYSTEM, android.media.AudioManager.ADJUST_UNMUTE, 0)
+                    audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION, android.media.AudioManager.ADJUST_UNMUTE, 0)
+                } catch (ignored: Exception) {}
+            }, 400L)
+        } catch (e: Exception) {
+            Log.w(TAG, "Beep suppression error: ${e.message}")
         }
     }
 
@@ -927,10 +1373,15 @@ class JarvisSpeechManager(
                 effectiveCommand = if (stripped.isNotBlank()) stripped else finalWords
             }
 
+            val isMr = _selectedLanguage.value == VoiceLanguage.MARATHI ||
+                    MarathiTtsManager.isDevanagari(effectiveCommand) ||
+                    MarathiTtsManager.isMarathiPhrase(effectiveCommand)
+            val displayCommand = MarathiTtsManager.formatRecognizedSpeechForDisplay(effectiveCommand, isMr)
+
             Log.i(TAG, "Recognized user words: '$effectiveCommand'. Sending to get answer...")
             _speechState.value = SpeechState.PROCESSING
             _audioRms.value = 0f
-            _partialText.value = effectiveCommand
+            _partialText.value = displayCommand
             isRecognizerActive = false
 
             // Start 6-second safety watchdog so state never hangs if assistant takes too long
@@ -965,6 +1416,20 @@ class JarvisSpeechManager(
     fun scheduleContinuousRestart(delayMillis: Long = 100) {
         if (!isContinuousModeActive() || isDestroyed) return
 
+        if (isCallActive()) {
+            _isCallSuspended.value = true
+            _speechState.value = SpeechState.IDLE
+            scheduleCallResumeCheck()
+            return
+        }
+
+        if (isExternalMediaActive()) {
+            _isExternalMediaPlaying.value = true
+            _speechState.value = SpeechState.IDLE
+            scheduleMediaResumeCheck()
+            return
+        }
+
         continuousRestartRunnable?.let { mainHandler.removeCallbacks(it) }
         val runnable = Runnable {
             isContinuousRestartScheduled = false
@@ -973,9 +1438,11 @@ class JarvisSpeechManager(
                 System.currentTimeMillis() >= ttsAudioCooldownUntil &&
                 _speechState.value != SpeechState.SPEAKING &&
                 _speechState.value != SpeechState.PROCESSING &&
+                !isCallActive() &&
+                !isExternalMediaActive() &&
                 !isDestroyed
             ) {
-                startListening()
+                startListening(promptForSpeech = false)
             }
         }
         continuousRestartRunnable = runnable
@@ -1024,7 +1491,13 @@ class JarvisSpeechManager(
                 _audioRms.value = 0f
 
                 val preparedSpeech = textToSpeech?.let { tts ->
-                    MarathiTtsManager.prepareAndConfigureTts(tts, text, _selectedLanguage.value)
+                    MarathiTtsManager.prepareAndConfigureTts(
+                        tts,
+                        text,
+                        _selectedLanguage.value,
+                        _speechRate.value,
+                        _speechPitch.value
+                    )
                 }
                 val speechPayload = preparedSpeech?.textToSpeak ?: text
 
@@ -1069,6 +1542,23 @@ class JarvisSpeechManager(
         isDestroyed = true
         abandonTransientAudioFocus()
         duckInternalPlayer(false)
+        mediaResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        callResumeRunnable?.let { mainHandler.removeCallbacks(it) }
+        mediaResumeRunnable = null
+        callResumeRunnable = null
+
+        // Unregister AudioPlaybackCallback on Android O+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                (audioPlaybackCallback as? android.media.AudioManager.AudioPlaybackCallback)?.let {
+                    am?.unregisterAudioPlaybackCallback(it)
+                }
+                audioPlaybackCallback = null
+            } catch (e: Exception) {
+                Log.w(TAG, "Error unregistering AudioPlaybackCallback: ${e.message}")
+            }
+        }
         runOnMainThread {
             try {
                 cancelSilenceTimer()
@@ -1141,15 +1631,20 @@ class JarvisSpeechManager(
             _audioRms.value = 0f
             return
         }
-        // Feed real-time audio dB into the background noise filter and human voice detector
-        voiceActivityDetector.onAudioEnergySample(rmsdB)
+        val sensitivity = _micSensitivity.value
+        val scaledRms = (rmsdB * sensitivity).coerceIn(-5.0f, 20.0f)
 
-        // Noise gate: ignore quiet background noise / fans (< 2.5 dB) for the HUD visualizer
-        val normalized = if (rmsdB > 2.5f) ((rmsdB - 2.5f) / 7.5f).coerceIn(0.05f, 1f) else 0f
+        // Feed real-time audio dB into the background noise filter and human voice detector
+        voiceActivityDetector.onAudioEnergySample(scaledRms)
+
+        // Noise gate: scaled dynamically by user mic sensitivity
+        val gateThreshold = (2.5f / sensitivity).coerceIn(1.0f, 4.0f)
+        val normalized = if (scaledRms > gateThreshold) ((scaledRms - gateThreshold) / 7.5f).coerceIn(0.05f, 1f) else 0f
         _audioRms.value = normalized
 
         // If audio energy is high while user is speaking, reset the 2s silence timer
-        if (isSpeechActive && rmsdB > 3.0f) {
+        val voiceThreshold = (3.0f / sensitivity).coerceIn(1.2f, 4.5f)
+        if (isSpeechActive && scaledRms > voiceThreshold) {
             resetSilenceTimer()
         }
     }
@@ -1263,10 +1758,15 @@ class JarvisSpeechManager(
                 return
             }
 
+            val isMr = _selectedLanguage.value == VoiceLanguage.MARATHI ||
+                    MarathiTtsManager.isDevanagari(recognizedSentence) ||
+                    MarathiTtsManager.isMarathiPhrase(recognizedSentence)
+            val displaySentence = MarathiTtsManager.formatRecognizedSpeechForDisplay(recognizedSentence, isMr)
+
             isSpeechActive = true
             speechBuffer.clear()
             speechBuffer.append(recognizedSentence)
-            _partialText.value = recognizedSentence
+            _partialText.value = displaySentence
             voiceActivityDetector.onSpeechDetected(true, hasRecognizedWords = true)
 
             // Sentence recognition is complete; commit and send immediately for instant response!
@@ -1298,10 +1798,15 @@ class JarvisSpeechManager(
                 return
             }
 
+            val isMr = _selectedLanguage.value == VoiceLanguage.MARATHI ||
+                    MarathiTtsManager.isDevanagari(partial) ||
+                    MarathiTtsManager.isMarathiPhrase(partial)
+            val displayPartial = MarathiTtsManager.formatRecognizedSpeechForDisplay(partial, isMr)
+
             isSpeechActive = true
             speechBuffer.clear()
             speechBuffer.append(partial)
-            _partialText.value = partial
+            _partialText.value = displayPartial
             voiceActivityDetector.onSpeechDetected(true, hasRecognizedWords = true)
             Log.d(TAG, "Catching speech: '$partial' (resetting 2s silence timer)")
 

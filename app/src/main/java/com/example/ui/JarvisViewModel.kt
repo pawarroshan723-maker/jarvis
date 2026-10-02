@@ -19,6 +19,7 @@ import com.example.sensor.SensorHub
 import com.example.sensor.SensorTelemetry
 import com.example.service.JarvisAutomationService
 import com.example.system.AutoCallSmsConfig
+import com.example.ui.accessibility.AccessibilityConfig
 import com.example.voice.JarvisSpeechManager
 import com.example.voice.MicAlwaysOnMode
 import com.example.voice.SpeechState
@@ -83,6 +84,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     val lastSpokenText: StateFlow<String> = speechManager.lastSpokenText
     val recognitionError: StateFlow<String?> = speechManager.recognitionError
     val selectedLanguage: StateFlow<com.example.voice.VoiceLanguage> = speechManager.selectedLanguage
+    val speechRate: StateFlow<Float> = speechManager.speechRate
+    val speechPitch: StateFlow<Float> = speechManager.speechPitch
+    val micSensitivity: StateFlow<Float> = speechManager.micSensitivity
 
     // Human Voice Activity Detection & Noise Cancellation states
     val isVoiceActive: StateFlow<Boolean> = speechManager.isVoiceActive
@@ -90,6 +94,19 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     val backgroundNoiseLevel: StateFlow<Float> = speechManager.backgroundNoiseLevel
     val isNoiseSuppressorActive: StateFlow<Boolean> = speechManager.isNoiseSuppressorActive
     val noiseCancellationStatus: StateFlow<String> = speechManager.noiseCancellationStatus
+
+    // Noise dB Sensitivity & Manual Control Flows
+    val noiseGateThresholdDb: StateFlow<Float> = speechManager.noiseGateThresholdDb
+    val isManualNoiseGate: StateFlow<Boolean> = speechManager.isManualNoiseGate
+    val liveSnrDb: StateFlow<Float> = speechManager.liveSnrDb
+    val effectiveGateThresholdDb: StateFlow<Float> = speechManager.effectiveGateThresholdDb
+    val isNoiseGateOpen: StateFlow<Boolean> = speechManager.isNoiseGateOpen
+    val dspHardwareAudit: StateFlow<com.example.voice.DspHardwareAudit> = speechManager.dspHardwareAudit
+
+    // Media & Phone Call Coexistence State Flows
+    val isCallSuspended: StateFlow<Boolean> = speechManager.isCallSuspended
+    val isExternalMediaPlaying: StateFlow<Boolean> = speechManager.isExternalMediaPlaying
+    val mediaHandsFreeMode: StateFlow<com.example.voice.MediaHandsFreeMode> = speechManager.mediaHandsFreeMode
 
     private val _selectedTab = MutableStateFlow(0)
     val selectedTab: StateFlow<Int> = _selectedTab.asStateFlow()
@@ -189,6 +206,102 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _showDiagnosticsDialog = MutableStateFlow(false)
     val showDiagnosticsDialog: StateFlow<Boolean> = _showDiagnosticsDialog.asStateFlow()
+
+    private val _showAccessibilityDialog = MutableStateFlow(false)
+    val showAccessibilityDialog: StateFlow<Boolean> = _showAccessibilityDialog.asStateFlow()
+
+    private val _accessibilityConfig = MutableStateFlow(AccessibilityConfig.loadFromPrefs(app))
+    val accessibilityConfig: StateFlow<AccessibilityConfig> = _accessibilityConfig.asStateFlow()
+
+    fun setAccessibilityDialogVisible(visible: Boolean) {
+        _showAccessibilityDialog.value = visible
+        if (visible) {
+            _accessibilityConfig.value = AccessibilityConfig.loadFromPrefs(app)
+        }
+    }
+
+    fun toggleHighContrast(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isHighContrastMode = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (updated.isHapticFeedbackEnabled) hardware.vibrate(50)
+    }
+
+    fun toggleLargeText(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isLargeTextMode = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (updated.isHapticFeedbackEnabled) hardware.vibrate(50)
+    }
+
+    fun toggleHapticFeedback(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isHapticFeedbackEnabled = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (enabled) hardware.vibrate(80)
+    }
+
+    fun toggleTalkBackAnnouncements(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isTalkBackAnnouncementsEnabled = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (updated.isHapticFeedbackEnabled) hardware.vibrate(50)
+    }
+
+    fun toggleTouchTargetExpanded(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isTouchTargetExpanded = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (updated.isHapticFeedbackEnabled) hardware.vibrate(50)
+    }
+
+    fun toggleVoiceFirstMode(enabled: Boolean) {
+        val updated = _accessibilityConfig.value.copy(isVoiceFirstMode = enabled)
+        _accessibilityConfig.value = updated
+        AccessibilityConfig.saveToPrefs(app, updated)
+        if (updated.isHapticFeedbackEnabled) hardware.vibrate(50)
+        if (enabled) {
+            speechManager.setMicAlwaysOnMode(MicAlwaysOnMode.SCREEN_ON_ONLY)
+        }
+    }
+
+    fun testAccessibilityFeedback() {
+        hardware.vibrate(120)
+        val isMarathi = selectedLanguage.value == com.example.voice.VoiceLanguage.MARATHI
+        val msg = if (isMarathi) "सुलभता व्हायब्रेशन आणि व्हॉईस फीडबॅक चाचणी यशस्वी!" else "Accessibility haptic pulse and voice feedback test successful."
+        speechManager.speak(msg)
+    }
+
+    val isAccessibilityServiceActive: StateFlow<Boolean> = com.example.accessibility.JarvisAccessibilityService.isAccessibilityEnabled
+
+    fun openAccessibilitySettings() {
+        com.example.accessibility.JarvisAccessibilityService.openAccessibilitySettings(app)
+    }
+
+    fun triggerGlobalAction(action: String) {
+        val a11y = com.example.accessibility.JarvisAccessibilityService.instance
+        if (a11y == null) {
+            openAccessibilitySettings()
+            val msg = if (selectedLanguage.value == com.example.voice.VoiceLanguage.MARATHI)
+                "डिव्हाईस कंट्रोलसाठी सुलभता सेवा सक्षम करा."
+            else
+                "Jarvis Accessibility Service required. Opening settings."
+            speechManager.speak(msg)
+            return
+        }
+
+        when (action) {
+            "HOME" -> a11y.pressHome()
+            "BACK" -> a11y.pressBack()
+            "RECENTS" -> a11y.openRecents()
+            "NOTIFICATIONS" -> a11y.openNotifications()
+            "QUICK_SETTINGS" -> a11y.openQuickSettings()
+            "SCREENSHOT" -> a11y.takeScreenshot()
+            "LOCK" -> a11y.lockScreen()
+            "POWER" -> a11y.openPowerDialog()
+        }
+        hardware.vibrate(50)
+    }
 
     private val _diagnosticReport = MutableStateFlow<VoiceDiagnosticReport?>(null)
     val diagnosticReport: StateFlow<VoiceDiagnosticReport?> = _diagnosticReport.asStateFlow()
@@ -421,6 +534,30 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         speechManager.setLanguage(language)
     }
 
+    fun setSpeechRate(rate: Float) {
+        speechManager.setSpeechRate(rate)
+    }
+
+    fun setSpeechPitch(pitch: Float) {
+        speechManager.setSpeechPitch(pitch)
+    }
+
+    fun setMicSensitivity(sensitivity: Float) {
+        speechManager.setMicSensitivity(sensitivity)
+    }
+
+    fun setNoiseGateThresholdDb(thresholdDb: Float, isManual: Boolean = true) {
+        speechManager.setNoiseGateThresholdDb(thresholdDb, isManual)
+    }
+
+    fun setNoiseGateMode(isManual: Boolean) {
+        speechManager.setNoiseGateMode(isManual)
+    }
+
+    fun refreshDspHardwareAudit(): com.example.voice.DspHardwareAudit {
+        return speechManager.runDspHardwareAudit()
+    }
+
     fun cycleVoiceLanguage(): com.example.voice.VoiceLanguage {
         return speechManager.cycleLanguage()
     }
@@ -523,7 +660,11 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             _isProcessing.value = false
             return
         }
-        _lastRecognizedCommand.value = command
+        val isMr = selectedLanguage.value == com.example.voice.VoiceLanguage.MARATHI ||
+                com.example.voice.MarathiTtsManager.isDevanagari(command) ||
+                com.example.voice.MarathiTtsManager.isMarathiPhrase(command)
+        val displayCommand = com.example.voice.MarathiTtsManager.formatRecognizedSpeechForDisplay(command, isMr)
+        _lastRecognizedCommand.value = displayCommand
         _isProcessing.value = true
 
         viewModelScope.launch {
@@ -581,8 +722,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                                 cmdLower.contains("stock") || isWeatherQuery ||
                                 cmdLower.contains("आजचा") || cmdLower.contains("ताज्या बातम्या")
 
-                        val useSearch = cmdLower.contains("search") || isRealTimeQuery
-                        val useMaps = cmdLower.contains("where") || cmdLower.contains("map") || cmdLower.contains("near")
+                        val useSearch = cmdLower.contains("search the web") ||
+                                cmdLower.contains("google search") ||
+                                cmdLower.startsWith("search ") ||
+                                cmdLower.startsWith("google ")
+                        val useMaps = (cmdLower.contains("where is") || cmdLower.contains("directions to") || cmdLower.contains("show map")) &&
+                                !cmdLower.contains("weather") && !cmdLower.contains("time")
 
                         val answer = app.geminiAssistantEngine.queryAssistant(
                             userQuery = command,
@@ -953,10 +1098,22 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 )
             )
 
+            val currentRules = repository.getActiveRulesSync()
+            var addedCount = 0
             for (rule in presets) {
-                repository.insertRule(rule)
+                val exists = currentRules.any {
+                    it.triggerType == rule.triggerType && it.actionType == rule.actionType
+                }
+                if (!exists) {
+                    repository.insertRule(rule)
+                    addedCount++
+                }
             }
-            speechManager.speak("Full suite of pre-configured automation rules added to local core.")
+            if (addedCount > 0) {
+                speechManager.speak("$addedCount automation rules loaded to local core.")
+            } else {
+                speechManager.speak("All pre-configured rules are already present.")
+            }
         }
     }
 
@@ -1024,8 +1181,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     matchType = "CONTAINS"
                 )
             )
+            val currentSmsRules = autoSmsRules.value
             for (rule in presets) {
-                repository.insertAutoSmsRule(rule)
+                val exists = currentSmsRules.any { it.keyword.equals(rule.keyword, ignoreCase = true) }
+                if (!exists) {
+                    repository.insertAutoSmsRule(rule)
+                }
             }
             speechManager.speak("Pre-configured auto-SMS rules deployed.")
         }
@@ -1085,6 +1246,23 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         val next = speechManager.toggleWakeWordLock()
         val msg = if (next) "Wake-Word Lock ON: Speak 'Jarvis' to command."
         else "Wake-Word Lock OFF: Continuous open mic active."
+        _systemStatusMessage.value = msg
+        speechManager.speak(msg)
+        return next
+    }
+
+    // Media Hands-Free Mode Control (Ducking vs Music Priority)
+    fun setMediaHandsFreeMode(mode: com.example.voice.MediaHandsFreeMode) {
+        speechManager.setMediaHandsFreeMode(mode)
+    }
+
+    fun toggleMediaHandsFreeMode(): com.example.voice.MediaHandsFreeMode {
+        val next = speechManager.toggleMediaHandsFreeMode()
+        val msg = if (next == com.example.voice.MediaHandsFreeMode.AUDIO_DUCKING_HANDS_FREE) {
+            "Hands-Free Media Ducking active. Mic stays listening during YouTube playback."
+        } else {
+            "Music Priority mode active. Background mic paused during YouTube playback."
+        }
         _systemStatusMessage.value = msg
         speechManager.speak(msg)
         return next

@@ -105,6 +105,48 @@ class HardwareController(private val context: Context) {
 
     fun isFlashlightActive(): Boolean = isTorchOn
 
+    fun startFlashlightStrobe(cycles: Int = 10): Boolean {
+        return try {
+            Thread {
+                try {
+                    for (i in 0 until cycles) {
+                        setFlashlight(true)
+                        Thread.sleep(100)
+                        setFlashlight(false)
+                        Thread.sleep(100)
+                    }
+                } catch (e: Exception) {
+                    setFlashlight(false)
+                }
+            }.start()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun startFlashlightSos(): Boolean {
+        return try {
+            Thread {
+                try {
+                    // S-O-S in Morse code: 3 short, 3 long, 3 short
+                    val pattern = listOf(150, 150, 150, 150, 150, 400, 450, 150, 450, 150, 450, 400, 150, 150, 150, 150, 150)
+                    for ((index, duration) in pattern.withIndex()) {
+                        val state = index % 2 == 0
+                        setFlashlight(state)
+                        Thread.sleep(duration.toLong())
+                    }
+                    setFlashlight(false)
+                } catch (e: Exception) {
+                    setFlashlight(false)
+                }
+            }.start()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // --- AUDIO & VOLUME ---
     fun setMediaVolumePercent(percent: Int): Boolean {
         if (audioManager == null) return false
@@ -299,15 +341,93 @@ class HardwareController(private val context: Context) {
         }
     }
 
+    fun launchDisplaySettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_DISPLAY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun launchSoundSettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_SOUND_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun launchBatterySaverSettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun launchApplicationSettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun launchAccessibilitySettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun launchDateSettings(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_DATE_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun launchAppByName(nameQuery: String): Pair<Boolean, String> {
         val query = nameQuery.trim().lowercase()
         // Special keywords & popular app mappings (English & Marathi)
         when {
             query.contains("camera") || query.contains("कॅमेरा") -> return Pair(launchCamera(), "Camera")
             query.contains("dial") || query.contains("phone") || query.contains("फोन") || query.contains("डायलर") -> return Pair(launchDialer(), "Phone Dialer")
-            query.contains("setting") || query.contains("सेटिंग") -> return Pair(launchSettings(), "System Settings")
             query.contains("wifi") || query.contains("wi-fi") || query.contains("वायफाय") -> return Pair(launchWifiSettings(), "Wi-Fi Settings")
             query.contains("bluetooth") || query.contains("ब्लूटूथ") -> return Pair(launchBluetoothSettings(), "Bluetooth Settings")
+            query.contains("display") || query.contains("screen setting") || query.contains("brightness") || query.contains("डिस्प्ले") -> return Pair(launchDisplaySettings(), "Display Settings")
+            query.contains("sound setting") || query.contains("audio setting") || query.contains("volume setting") || query.contains("आवाज सेटिंग") -> return Pair(launchSoundSettings(), "Sound Settings")
+            query.contains("battery saver") || query.contains("battery setting") || query.contains("बॅटरी सेटिंग") -> return Pair(launchBatterySaverSettings(), "Battery Settings")
+            query.contains("app setting") || query.contains("manage app") || query.contains("application setting") || query.contains("ॲप सेटिंग") -> return Pair(launchApplicationSettings(), "Application Settings")
+            query.contains("accessibility") || query.contains("ॲक्सेसिबिलिटी") -> return Pair(launchAccessibilitySettings(), "Accessibility Settings")
+            query.contains("date setting") || query.contains("time setting") || query.contains("तारीख वेळ सेटिंग") -> return Pair(launchDateSettings(), "Date & Time Settings")
+            query.contains("setting") || query.contains("सेटिंग") -> return Pair(launchSettings(), "System Settings")
             query.contains("browser") || query.contains("chrome") || query.contains("क्रोम") || query.contains("ब्राउझर") -> return Pair(launchBrowser(), "Web Browser")
             query.contains("youtube") || query.contains("यूट्यूब") -> {
                 val launched = launchAppByPackage("com.google.android.youtube")

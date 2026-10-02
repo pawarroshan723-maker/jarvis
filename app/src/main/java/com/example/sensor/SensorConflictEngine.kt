@@ -43,14 +43,99 @@ class SensorConflictEngine(
      * and cross-sensor conflict resolution.
      */
     fun shouldExecuteRule(rule: AutomationRule, event: SensorTriggerEvent, now: Long): Pair<Boolean, String?> {
+        val telemetry = sensorHub.telemetry.value
+
+        // 1. Instantaneous Pulse Events (Shake / HandWave)
+        when (event) {
+            is SensorTriggerEvent.Shake -> {
+                val minThreshold = if (rule.triggerThreshold >= 20.0f) rule.triggerThreshold else 26.0f
+                if (rule.triggerType == TriggerTypes.SHAKE && event.force >= minThreshold) {
+                    val cooldownMs = rule.cooldownSeconds * 1000L
+                    if (now - rule.lastTriggeredTime < cooldownMs) {
+                        return Pair(false, "Cooldown active (${(cooldownMs - (now - rule.lastTriggeredTime)) / 1000}s remaining)")
+                    }
+                    if (sensorHub.isDeviceInPocket()) {
+                        return Pair(false, "Suppressed: Device in pocket or proximity covered")
+                    }
+                    return Pair(true, null)
+                }
+                return Pair(false, "Condition not met")
+            }
+            is SensorTriggerEvent.HandWave -> {
+                if (rule.triggerType == TriggerTypes.HAND_WAVE) {
+                    val cooldownMs = rule.cooldownSeconds * 1000L
+                    if (now - rule.lastTriggeredTime < cooldownMs) {
+                        return Pair(false, "Cooldown active")
+                    }
+                    Log.i(TAG, "[HandWave] Rule '${rule.name}' triggered by hand wave gesture (${event.type})")
+                    return Pair(true, null)
+                }
+                return Pair(false, "Condition not met")
+            }
+            else -> {}
+        }
+
+        // 2. Continuous State Condition Evaluation
+        val conditionState = when (event) {
+            is SensorTriggerEvent.LightChanged -> {
+                when (rule.triggerType) {
+                    TriggerTypes.LIGHT_BELOW -> event.lux <= rule.triggerThreshold
+                    TriggerTypes.LIGHT_ABOVE -> event.lux >= rule.triggerThreshold
+                    else -> false
+                }
+            }
+            is SensorTriggerEvent.ProximityChanged -> {
+                when (rule.triggerType) {
+                    TriggerTypes.PROXIMITY_NEAR -> event.isNear
+                    TriggerTypes.PROXIMITY_FAR -> !event.isNear
+                    else -> false
+                }
+            }
+            is SensorTriggerEvent.OrientationChanged -> {
+                when (rule.triggerType) {
+                    TriggerTypes.FLIP_FACE_DOWN -> event.newOrientation == DeviceOrientation.FLAT_FACE_DOWN
+                    TriggerTypes.FLIP_FACE_UP -> event.newOrientation == DeviceOrientation.FLAT_FACE_UP
+                    TriggerTypes.ORIENTATION_UPRIGHT -> event.newOrientation == DeviceOrientation.UPRIGHT
+                    else -> false
+                }
+            }
+            is SensorTriggerEvent.BatteryChanged -> {
+                when (rule.triggerType) {
+                    TriggerTypes.BATTERY_LOW -> event.level <= (rule.triggerThreshold.toInt().takeIf { it > 0 } ?: 20) && !telemetry.isCharging
+                    TriggerTypes.BATTERY_FULL -> event.level >= 99 && telemetry.isCharging
+                    else -> false
+                }
+            }
+            is SensorTriggerEvent.ChargerStatusChanged -> {
+                if (rule.triggerType == TriggerTypes.CHARGER_CONNECTED && event.isCharging) true
+                else rule.triggerType == TriggerTypes.CHARGER_DISCONNECTED && !event.isCharging
+            }
+            else -> false
+        }
+
+        val wasActive = ruleConditionActiveMap[rule.id] ?: false
+
+        if (!conditionState) {
+            // Condition fell below threshold (state reset)
+            ruleConditionActiveMap[rule.id] = false
+            return Pair(false, "Condition not met")
+        }
+
+        if (wasActive) {
+            // Continuous condition holding: do not re-fire on same state
+            return Pair(false, "Condition already active (level hold)")
+        }
+
+        // New rising edge detected! Register state transition immediately
+        ruleConditionActiveMap[rule.id] = true
+
+        // 3. Evaluate Cooldown
         val cooldownMs = rule.cooldownSeconds * 1000L
         if (now - rule.lastTriggeredTime < cooldownMs) {
             return Pair(false, "Cooldown active (${(cooldownMs - (now - rule.lastTriggeredTime)) / 1000}s remaining)")
         }
 
-        val telemetry = sensorHub.telemetry.value
-
-        // 1. Contextual Pocket Guard
+        // 4. Contextual Pocket Guard
         val inPocket = sensorHub.isDeviceInPocket()
         if (inPocket) {
             when (rule.actionType) {
@@ -69,7 +154,7 @@ class SensorConflictEngine(
             }
         }
 
-        // 2. Face-Down Privacy Guard
+        // 5. Face-Down Privacy Guard
         if (telemetry.orientation == DeviceOrientation.FLAT_FACE_DOWN) {
             if (rule.triggerType == TriggerTypes.LIGHT_ABOVE && (rule.actionType == ActionTypes.MAX_VOLUME || rule.actionType == ActionTypes.SET_VOLUME)) {
                 return Pair(false, "Suppressed: Device is face-down on table (meeting mode active)")
@@ -79,7 +164,7 @@ class SensorConflictEngine(
             }
         }
 
-        // 3. Redundant Hardware State Guard (No-Op Prevention)
+        // 6. Redundant Hardware State Guard (No-Op Prevention)
         when (rule.actionType) {
             ActionTypes.MAX_VOLUME -> {
                 val currentVol = hardwareController.getMediaVolumePercent()
@@ -114,82 +199,15 @@ class SensorConflictEngine(
             }
         }
 
-        // 4. Opposing Volume Rapid Oscillation Guard
+        // 7. Opposing Volume Rapid Oscillation Guard
         if (rule.actionType == ActionTypes.MAX_VOLUME || rule.actionType == ActionTypes.SET_VOLUME || rule.actionType == ActionTypes.MUTE_ALL) {
             if (now - lastVolumeAdjustmentTimestamp < 2500L) {
                 return Pair(false, "Suppressed: Opposing volume adjustment stabilizer active")
             }
         }
 
-        // 5. Sensor Condition & Edge-Triggering Evaluation
-        val conditionState = when (event) {
-            is SensorTriggerEvent.Shake -> {
-                val minThreshold = if (rule.triggerThreshold >= 20.0f) rule.triggerThreshold else 26.0f
-                if (rule.triggerType == TriggerTypes.SHAKE && event.force >= minThreshold) {
-                    return Pair(true, null) // Shake is an instantaneous pulse event
-                }
-                false
-            }
-            is SensorTriggerEvent.HandWave -> {
-                if (rule.triggerType == TriggerTypes.HAND_WAVE) {
-                    Log.i(TAG, "[HandWave] Rule '${rule.name}' triggered by hand wave gesture (${event.type})")
-                    return Pair(true, null) // Hand wave is an instantaneous gesture pulse event
-                }
-                false
-            }
-            is SensorTriggerEvent.LightChanged -> {
-                when (rule.triggerType) {
-                    TriggerTypes.LIGHT_BELOW -> event.lux <= rule.triggerThreshold
-                    TriggerTypes.LIGHT_ABOVE -> event.lux >= rule.triggerThreshold
-                    else -> false
-                }
-            }
-            is SensorTriggerEvent.ProximityChanged -> {
-                when (rule.triggerType) {
-                    TriggerTypes.PROXIMITY_NEAR -> event.isNear
-                    TriggerTypes.PROXIMITY_FAR -> !event.isNear
-                    else -> false
-                }
-            }
-            is SensorTriggerEvent.OrientationChanged -> {
-                when (rule.triggerType) {
-                    TriggerTypes.FLIP_FACE_DOWN -> event.newOrientation == DeviceOrientation.FLAT_FACE_DOWN
-                    TriggerTypes.FLIP_FACE_UP -> event.newOrientation == DeviceOrientation.FLAT_FACE_UP
-                    TriggerTypes.ORIENTATION_UPRIGHT -> event.newOrientation == DeviceOrientation.UPRIGHT
-                    else -> false
-                }
-            }
-            is SensorTriggerEvent.BatteryChanged -> {
-                when (rule.triggerType) {
-                    TriggerTypes.BATTERY_LOW -> event.level <= (rule.triggerThreshold.toInt().takeIf { it > 0 } ?: 20)
-                    TriggerTypes.BATTERY_FULL -> event.level >= 99
-                    else -> false
-                }
-            }
-            is SensorTriggerEvent.ChargerStatusChanged -> {
-                if (rule.triggerType == TriggerTypes.CHARGER_CONNECTED && event.isCharging) true
-                else rule.triggerType == TriggerTypes.CHARGER_DISCONNECTED && !event.isCharging
-            }
-        }
-
-        val wasActive = ruleConditionActiveMap[rule.id] ?: false
-
-        // For level-based sensors (Light, Battery, Proximity), only fire on rising edge (transition from false to true)
-        if (conditionState) {
-            if (!wasActive) {
-                // Rising edge transition!
-                ruleConditionActiveMap[rule.id] = true
-                Log.i(TAG, "[EdgeTrigger] Rule '${rule.name}' triggered on state entry ($conditionState)")
-                return Pair(true, null)
-            } else {
-                // Continuous condition holding: do not fire repeatedly!
-                return Pair(false, "Condition already active (level hold)")
-            }
-        } else {
-            // Condition fell below threshold (with hysteresis reset)
-            ruleConditionActiveMap[rule.id] = false
-            return Pair(false, "Condition not met")
-        }
+        Log.i(TAG, "[EdgeTrigger] Rule '${rule.name}' triggered on rising edge")
+        return Pair(true, null)
     }
 
     /**

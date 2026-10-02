@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -40,9 +41,12 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import java.util.Locale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -104,7 +108,24 @@ fun VoiceDiagnosticsDialog(
     isTestingModel: Boolean = false,
     onTestModel: (GeminiModelTier) -> Unit = {},
     exhaustedModels: List<String> = emptyList(),
-    onResetCooldowns: () -> Unit = {}
+    onResetCooldowns: () -> Unit = {},
+    speechRate: Float = 1.0f,
+    onSetSpeechRate: (Float) -> Unit = {},
+    speechPitch: Float = 1.20f,
+    onSetSpeechPitch: (Float) -> Unit = {},
+    micSensitivity: Float = 1.0f,
+    onSetMicSensitivity: (Float) -> Unit = {},
+    noiseGateThresholdDb: Float = 3.0f,
+    onSetNoiseGateThresholdDb: (Float, Boolean) -> Unit = { _, _ -> },
+    isManualNoiseGate: Boolean = false,
+    onSetNoiseGateMode: (Boolean) -> Unit = {},
+    liveSnrDb: Float = 0f,
+    effectiveGateThresholdDb: Float = 3.0f,
+    isNoiseGateOpen: Boolean = false,
+    backgroundNoiseLevel: Float = 24f,
+    currentRmsDb: Float = 0f,
+    dspHardwareAudit: com.example.voice.DspHardwareAudit? = null,
+    onRefreshDspAudit: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showApiKeyEditor by remember { mutableStateOf(false) }
@@ -954,6 +975,41 @@ fun VoiceDiagnosticsDialog(
                             }
                         }
                     }
+
+                    // MIC SENSITIVITY CONTROLLER CARD
+                    MicSensitivityCard(
+                        micSensitivity = micSensitivity,
+                        onSetMicSensitivity = onSetMicSensitivity
+                    )
+
+                    // NOISE dB SENSITIVITY & GATE MANUAL CONTROLLER CARD
+                    NoiseDbSensitivityCard(
+                        noiseGateThresholdDb = noiseGateThresholdDb,
+                        onSetNoiseGateThresholdDb = onSetNoiseGateThresholdDb,
+                        isManualNoiseGate = isManualNoiseGate,
+                        onSetNoiseGateMode = onSetNoiseGateMode,
+                        liveSnrDb = liveSnrDb,
+                        effectiveGateThresholdDb = effectiveGateThresholdDb,
+                        isNoiseGateOpen = isNoiseGateOpen,
+                        backgroundNoiseLevel = backgroundNoiseLevel,
+                        currentRmsDb = currentRmsDb
+                    )
+
+                    // DSP HARDWARE AUDIT: ACTUAL HARDWARE VS SIMULATOR CARD
+                    DspHardwareAuditCard(
+                        dspHardwareAudit = dspHardwareAudit,
+                        onRefreshDspAudit = onRefreshDspAudit
+                    )
+
+                    // JARVIS VOICE PROFILE (WOMAN VOICE ONLY) & CONTROLLER CARD
+                    VoiceProfileControllerCard(
+                        speechRate = speechRate,
+                        onSetSpeechRate = onSetSpeechRate,
+                        speechPitch = speechPitch,
+                        onSetSpeechPitch = onSetSpeechPitch,
+                        onTestTts = onTestTts,
+                        onTestMarathiTts = onTestMarathiTts
+                    )
 
                     // Diagnostics Checklist Items
                     report?.items?.forEach { item ->

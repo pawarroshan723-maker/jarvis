@@ -124,6 +124,29 @@ object VoiceDiagnostics {
             )
         )
 
+        // 3b. DSP Hardware vs Simulator Verification
+        val dspAudit = DspHardwareInspector.performHardwareAudit(context)
+        val dspPassed = true
+        val dspDetails = when (dspAudit.architecture) {
+            DspArchitectureType.ACTUAL_HARDWARE_DSP ->
+                "ACTUAL HARDWARE DSP: Silicon audio offload active on ${dspAudit.chipsetSoc}. Vendor: ${dspAudit.hardwareVendor}. Hardware NoiseSuppressor & AcousticEchoCanceler operating at silicon level."
+            DspArchitectureType.SOFTWARE_SIMULATOR_DSP ->
+                "SIMULATOR / EMULATOR DETECTED: Running in Android Virtual Device / Cloud Emulator (${dspAudit.chipsetSoc}). No physical DSP silicon; audio effects emulated in software via host bridge."
+            DspArchitectureType.AOSP_SOFTWARE_FILTER ->
+                "AOSP SOFTWARE DSP: Physical device detected, but audio noise effects use AOSP/WebRTC software CPU pre-processing."
+            DspArchitectureType.APP_EMBEDDED_FILTER ->
+                "JARVIS EMBEDDED DSP: Platform audio HAL lacks hardware effects; Jarvis active 300Hz-3.4kHz vocal formant bandpass filter & dynamic noise gate are running."
+        }
+        items.add(
+            DiagnosticItem(
+                title = "DSP Engine: Actual Hardware vs Simulator",
+                isPassed = dspPassed,
+                details = dspDetails,
+                actionLabel = "Inspect DSP Hardware",
+                actionType = "AUDIT_DSP"
+            )
+        )
+
         // 4. Text-To-Speech (TTS) Voice Engine
         items.add(
             DiagnosticItem(

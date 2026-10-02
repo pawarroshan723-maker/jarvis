@@ -876,27 +876,48 @@ fun RuleCard(
                 fontFamily = FontFamily.Monospace
             )
 
-            Row {
-                IconButton(
-                    onClick = onTest,
-                    modifier = Modifier.size(32.dp).testTag("test_rule_${rule.id}")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NeonGreen.copy(alpha = 0.15f))
+                        .border(1.dp, NeonGreen.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .clickable { onTest() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                        .testTag("test_rule_${rule.id}"),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Test Trigger",
-                        tint = NeonGreen,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Test Trigger",
+                            tint = NeonGreen,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "TEST",
+                            color = NeonGreen,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(32.dp).testTag("delete_rule_${rule.id}")
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("delete_rule_${rule.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
                         contentDescription = "Delete Rule",
-                        tint = NeonRed.copy(alpha = 0.8f),
+                        tint = NeonRed.copy(alpha = 0.85f),
                         modifier = Modifier.size(16.dp)
                     )
                 }

@@ -66,6 +66,7 @@ class JarvisCallReceiver : BroadcastReceiver() {
                     val numberToReport = incomingNumber ?: "Private Number"
                     Log.i(TAG, "Incoming call ringing: $numberToReport")
                     autoManager.onCallRinging(numberToReport)
+                    app.speechManager.onCallStateChanged(TelephonyManager.CALL_STATE_RINGING)
                 }
 
                 TelephonyManager.EXTRA_STATE_OFFHOOK -> {
@@ -74,6 +75,7 @@ class JarvisCallReceiver : BroadcastReceiver() {
                         autoManager.onCallAnswered()
                     }
                     lastState = TelephonyManager.CALL_STATE_OFFHOOK
+                    app.speechManager.onCallStateChanged(TelephonyManager.CALL_STATE_OFFHOOK)
                 }
 
                 TelephonyManager.EXTRA_STATE_IDLE -> {
@@ -86,6 +88,7 @@ class JarvisCallReceiver : BroadcastReceiver() {
                     }
                     lastState = TelephonyManager.CALL_STATE_IDLE
                     savedNumber = null
+                    app.speechManager.onCallStateChanged(TelephonyManager.CALL_STATE_IDLE)
                 }
             }
         } catch (e: Exception) {

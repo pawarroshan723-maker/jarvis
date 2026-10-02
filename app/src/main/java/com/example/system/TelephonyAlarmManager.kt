@@ -42,7 +42,9 @@ class TelephonyAlarmManager(private val context: Context) {
             add(Manifest.permission.CAMERA)
             add(Manifest.permission.CALL_PHONE)
             add(Manifest.permission.READ_PHONE_STATE)
+            add(Manifest.permission.READ_CALL_LOG)
             add(Manifest.permission.SEND_SMS)
+            add(Manifest.permission.RECEIVE_SMS)
             add(Manifest.permission.READ_SMS)
             add(Manifest.permission.READ_CONTACTS)
             add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -85,10 +87,28 @@ class TelephonyAlarmManager(private val context: Context) {
 
         list.add(
             PermissionStatus(
+                permission = Manifest.permission.READ_CALL_LOG,
+                title = "Caller ID & Call Logs",
+                description = "Required to identify caller name and phone number on incoming and missed calls.",
+                isGranted = hasPermission(Manifest.permission.READ_CALL_LOG)
+            )
+        )
+
+        list.add(
+            PermissionStatus(
                 permission = Manifest.permission.SEND_SMS,
                 title = "Send SMS",
                 description = "Allows Jarvis to send text messages to contacts automatically or by command.",
                 isGranted = hasPermission(Manifest.permission.SEND_SMS)
+            )
+        )
+
+        list.add(
+            PermissionStatus(
+                permission = Manifest.permission.RECEIVE_SMS,
+                title = "Receive & Read SMS",
+                description = "Required for incoming SMS trigger rules, missed call auto-replies and auto-reading text messages.",
+                isGranted = hasPermission(Manifest.permission.RECEIVE_SMS)
             )
         )
 
@@ -189,10 +209,16 @@ class TelephonyAlarmManager(private val context: Context) {
 
     // --- SMS MANAGEMENT ---
     @Suppress("DEPRECATION")
-    fun sendSms(number: String, message: String): Pair<Boolean, String> {
-        val cleanNumber = number.replace(Regex("[^0-9+]"), "")
+    fun sendSms(numberOrName: String, message: String): Pair<Boolean, String> {
+        val targetNumber = if (numberOrName.any { it.isLetter() }) {
+            val matches = searchContacts(numberOrName)
+            matches.firstOrNull()?.number ?: numberOrName
+        } else {
+            numberOrName
+        }
+        val cleanNumber = targetNumber.replace(Regex("[^0-9+]"), "")
         if (cleanNumber.isBlank()) {
-            return Pair(false, "Invalid phone number provided.")
+            return Pair(false, "Invalid phone number provided for '$numberOrName'.")
         }
 
         if (!hasPermission(Manifest.permission.SEND_SMS)) {

@@ -88,7 +88,10 @@ class JarvisApplication : Application() {
             android.util.Log.i("JarvisApp", "[EchoGuard] Discarded command matching recent spoken reply: '$command'")
             return
         }
-        lastCommandFlow.value = command
+        val isMr = speechManager.selectedLanguage.value == com.example.voice.VoiceLanguage.MARATHI ||
+                com.example.voice.MarathiTtsManager.isDevanagari(command) ||
+                com.example.voice.MarathiTtsManager.isMarathiPhrase(command)
+        lastCommandFlow.value = com.example.voice.MarathiTtsManager.formatRecognizedSpeechForDisplay(command, isMr)
         isExecutingCommand.value = true
 
         applicationScope.launch {
@@ -136,8 +139,12 @@ class JarvisApplication : Application() {
                                     cmdLower.contains("stock") || isWeatherQuery ||
                                     cmdLower.contains("आजचा") || cmdLower.contains("ताज्या बातम्या")
 
-                            val useSearch = cmdLower.contains("search") || isRealTimeQuery
-                            val useMaps = cmdLower.contains("where") || cmdLower.contains("map") || cmdLower.contains("near")
+                            val useSearch = cmdLower.contains("search the web") ||
+                                    cmdLower.contains("google search") ||
+                                    cmdLower.startsWith("search ") ||
+                                    cmdLower.startsWith("google ")
+                            val useMaps = (cmdLower.contains("where is") || cmdLower.contains("directions to") || cmdLower.contains("show map")) &&
+                                    !cmdLower.contains("weather") && !cmdLower.contains("time")
                             geminiAssistantEngine.queryAssistant(
                                 userQuery = command,
                                 enableHighThinking = false,

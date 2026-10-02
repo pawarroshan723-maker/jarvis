@@ -1,0 +1,24 @@
+*.iml
+.gradle
+.kotlin/
+local.properties
+.idea/caches
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+debug.keystore
+
+# Unignore APK files so they ARE included when exporting/downloading project ZIP
+!*.apk
+!Jarvis.apk
+!app-debug.apk
+!Jarvis_App.apk

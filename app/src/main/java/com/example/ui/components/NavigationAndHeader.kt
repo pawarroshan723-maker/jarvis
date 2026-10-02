@@ -24,12 +24,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DeveloperBoard
-import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -82,6 +84,9 @@ fun JarvisTopBar(
     selectedModelTier: com.example.engine.GeminiModelTier = com.example.engine.GeminiModelTier.AUTO_CASCADE,
     onCycleModelTier: () -> Unit = {},
     isAutoFallbackEnabled: Boolean = true,
+    dspHardwareAudit: com.example.voice.DspHardwareAudit? = null,
+    onOpenDiagnostics: () -> Unit = {},
+    onOpenCommandsHelp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -336,19 +341,57 @@ fun JarvisTopBar(
                 }
             }
 
-            // DSP Noise Filter Badge
+            // DSP Noise Filter Badge (Actual Hardware vs Simulator)
+            val dspColor = when {
+                dspHardwareAudit?.isActualHardware == true -> NeonGreen
+                dspHardwareAudit?.isSimulator == true -> NeonAmber
+                else -> ArcCyan
+            }
+            val dspText = when {
+                dspHardwareAudit?.isActualHardware == true -> "DSP: HW"
+                dspHardwareAudit?.isSimulator == true -> "DSP: SIM"
+                else -> "DSP: ON"
+            }
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .background(ObsidianDark)
-                    .border(1.dp, NeonGreen.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                    .border(1.dp, dspColor.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                    .clickable { onOpenDiagnostics() }
                     .padding(horizontal = 5.dp, vertical = 5.dp)
+                    .testTag("topbar_dsp_badge")
             ) {
                 Text(
-                    text = "DSP: ON",
-                    color = NeonGreen,
+                    text = dspText,
+                    color = dspColor,
                     fontSize = 8.sp,
                     fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    softWrap = false,
+                    maxLines = 1
+                )
+            }
+
+            // Commands & Help Menu Button
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(ArcCyanContainer)
+                    .border(1.dp, ArcCyan, RoundedCornerShape(6.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = androidx.compose.material3.ripple(bounded = true, color = ArcCyan),
+                        onClick = onOpenCommandsHelp
+                    )
+                    .padding(horizontal = 6.dp, vertical = 5.dp)
+                    .testTag("topbar_commands_help_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "CMD ?",
+                    color = ArcCyan,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Monospace,
                     softWrap = false,
                     maxLines = 1
@@ -368,7 +411,9 @@ fun JarvisBottomNav(
         containerColor = SurfaceDark,
         contentColor = ArcCyan,
         tonalElevation = 8.dp,
-        modifier = modifier.border(width = 1.dp, color = BorderCyan.copy(alpha = 0.5f))
+        windowInsets = androidx.compose.material3.NavigationBarDefaults.windowInsets,
+        modifier = modifier
+            .border(width = 1.dp, color = BorderCyan.copy(alpha = 0.5f))
     ) {
         val items = listOf(
             Triple(0, "Core", Icons.Default.Mic),
@@ -386,15 +431,16 @@ fun JarvisBottomNav(
                     Icon(
                         imageVector = icon,
                         contentDescription = label,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 },
                 label = {
                     Text(
                         text = label,
-                        fontSize = 11.sp,
-                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
-                        fontFamily = FontFamily.Monospace
+                        fontSize = 10.5.sp,
+                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.5.sp
                     )
                 },
                 colors = NavigationBarItemDefaults.colors(

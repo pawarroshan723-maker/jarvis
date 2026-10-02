@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,11 +8,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.JarvisApplication
 import com.example.MainActivity
 import com.example.R
@@ -113,14 +116,28 @@ class JarvisAutomationService : Service() {
             }
         }
 
+        val hasMicPermission = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
         val notification = buildForegroundNotification("Monitoring Environmental Triggers, Telephony & Voice Core")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val fgsTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            startForeground(NOTIFICATION_ID, notification, fgsTypes)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val fgsTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                    (if (hasMicPermission) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+                startForeground(NOTIFICATION_ID, notification, fgsTypes)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (hasMicPermission) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("JarvisAutomationService", "startForeground failed: ${e.message}", e)
         }
         _isRunning.value = true
 

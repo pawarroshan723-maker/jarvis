@@ -295,8 +295,8 @@ class ScheduledTaskManager(
             return false
         }
 
-        if (!task.isEnabled || task.status == "CANCELLED") {
-            Log.i(TAG, "Task #$taskId is disabled or cancelled. Skipping execution.")
+        if (!task.isEnabled || task.status == "CANCELLED" || (task.repeatFrequency == "ONCE" && task.status == "EXECUTED")) {
+            Log.i(TAG, "Task #$taskId is disabled, cancelled, or already executed. Skipping.")
             return false
         }
 
@@ -314,7 +314,7 @@ class ScheduledTaskManager(
                     geminiEngine.queryAssistant(
                         userQuery = task.messageText,
                         enableHighThinking = false,
-                        useSearch = true
+                        useSearch = false
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "Error calling Gemini for scheduled task", e)
@@ -343,51 +343,63 @@ class ScheduledTaskManager(
                 val geminiEngine = app?.geminiAssistantEngine ?: com.example.engine.GeminiAssistantEngine(context)
 
                 val prompt = "Draft a concise, polite text message (under 140 characters, no markdown asterisks, no quotes) for: ${task.messageText}"
-                val aiMessage = try {
+                val aiMessage: String? = try {
                     val res = geminiEngine.queryAssistant(prompt)
                     if (res.contains("strict offline mode", ignoreCase = true) ||
                         res.contains("API key", ignoreCase = true) ||
+                        res.contains("error", ignoreCase = true) ||
+                        res.contains("rate limit", ignoreCase = true) ||
                         res.isBlank()
                     ) {
-                        task.messageText
+                        null
                     } else {
                         res
                     }
                 } catch (e: Exception) {
-                    task.messageText
+                    null
                 }
 
-                val cleanMsg = aiMessage.replace("*", "").replace("\"", "").trim()
-                val (smsOk, smsDesc) = sendSmsDirect(task.targetPhoneNumber, cleanMsg)
-                sendSuccess = smsOk
-                resultDetail = if (smsOk) "Sent: $cleanMsg" else "Failed ($smsDesc): $cleanMsg"
+                if (aiMessage == null) {
+                    Log.w(TAG, "Gemini text generation failed for scheduled task #${task.id}. Not sending raw prompt or error.")
+                    sendSuccess = false
+                    resultDetail = "AI draft generation failed; SMS dispatch cancelled for safety."
+                    val finalContactName = task.recipientName.ifBlank {
+                        telephonyManager.lookupContactNameByNumber(task.targetPhoneNumber).ifBlank { "" }
+                    }
+                    postExecutionNotification(task.copy(recipientName = finalContactName), false, resultDetail)
+                } else {
+                    val cleanMsg = aiMessage.replace("*", "").replace("\"", "").trim()
+                    val (smsOk, smsDesc) = sendSmsDirect(task.targetPhoneNumber, cleanMsg)
+                    sendSuccess = smsOk
+                    resultDetail = if (smsOk) "Sent: $cleanMsg" else "Failed ($smsDesc): $cleanMsg"
 
-                val finalContactName = task.recipientName.ifBlank {
-                    telephonyManager.lookupContactNameByNumber(task.targetPhoneNumber).ifBlank { "" }
+                    val finalContactName = task.recipientName.ifBlank {
+                        telephonyManager.lookupContactNameByNumber(task.targetPhoneNumber).ifBlank { "" }
+                    }
+
+                    repository.insertCallSmsLog(
+                        CallSmsLog(
+                            type = "OUTGOING_SMS",
+                            phoneNumber = task.targetPhoneNumber,
+                            contactName = finalContactName,
+                            messageBody = "[Scheduled Gemini SMS] $cleanMsg",
+                            timestamp = now,
+                            status = if (smsOk) "DELIVERED" else "FAILED"
+                        )
+                    )
+
+                    repository.insertLog(
+                        ExecutionLog(
+                            ruleName = "Scheduled Gemini to SMS",
+                            triggerType = "TIME_SCHEDULE (${task.repeatFrequency})",
+                            details = "$smsDesc\nRecipient: ${if (finalContactName.isNotBlank()) "$finalContactName (${task.targetPhoneNumber})" else task.targetPhoneNumber}\nMessage: \"$cleanMsg\"",
+                            isSuccess = smsOk,
+                            timestamp = now
+                        )
+                    )
+
+                    postExecutionNotification(task.copy(messageText = cleanMsg, recipientName = finalContactName), smsOk, smsDesc)
                 }
-
-                repository.insertCallSmsLog(
-                    CallSmsLog(
-                        type = "OUTGOING_SMS",
-                        phoneNumber = task.targetPhoneNumber,
-                        contactName = finalContactName,
-                        messageBody = "[Scheduled Gemini SMS] $cleanMsg",
-                        timestamp = now,
-                        status = if (smsOk) "DELIVERED" else "FAILED"
-                    )
-                )
-
-                repository.insertLog(
-                    ExecutionLog(
-                        ruleName = "Scheduled Gemini to SMS",
-                        triggerType = "TIME_SCHEDULE (${task.repeatFrequency})",
-                        details = "$smsDesc\nRecipient: ${if (finalContactName.isNotBlank()) "$finalContactName (${task.targetPhoneNumber})" else task.targetPhoneNumber}\nMessage: \"$cleanMsg\"",
-                        isSuccess = smsOk,
-                        timestamp = now
-                    )
-                )
-
-                postExecutionNotification(task.copy(messageText = cleanMsg, recipientName = finalContactName), smsOk, smsDesc)
             }
 
             else -> { // "AUTO_SMS"

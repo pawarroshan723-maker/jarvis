@@ -163,13 +163,13 @@ class ConversationMemory(private val context: Context? = null) {
         var query = rawQuery.trim()
         val lower = query.lowercase(Locale.ROOT)
 
-        // 1. Homophone normalization: "whether" -> "weather"
+        // 1. Homophone normalization: only replace "whether" with "weather" in actual weather context or active weather topic
         if (lower.contains("whether")) {
-            val isWeatherContext = lower.contains("today") || lower.contains("full") ||
-                    lower.contains("tomorrow") || lower.contains("forecast") ||
-                    lower.contains("report") || lower.contains("rain") ||
-                    lower.contains("temperature") || lower.contains("in ") ||
-                    lower.contains("for ") || (activeTopic == "Weather")
+            val isWeatherContext = lower.contains("forecast") || lower.contains("rain") ||
+                    lower.contains("temperature") || lower.contains("climate") ||
+                    lower.contains("whether in") || lower.contains("whether report") ||
+                    lower.contains("whether today") || lower.contains("whether tomorrow") ||
+                    lower.contains("full whether") || lower == "whether" || (activeTopic == "Weather")
 
             if (isWeatherContext) {
                 query = query.replace("(?i)\\bwhether\\b".toRegex(), "weather")
@@ -323,9 +323,9 @@ class ConversationMemory(private val context: Context? = null) {
         if (query.contains("अमरावती") || query.contains("अमरावतीत")) return "Amravati"
         if (query.contains("नाशिक") || query.contains("नाशिकमध्ये")) return "Nashik"
 
-        // Pattern matching: "in <City>", "for <City>", "at <City>", "weather in <City>"
-        val pattern = "(?i)\\b(?:in|for|at|around|weather in|whether in)\\s+([A-Za-z]{3,20})\\b".toRegex()
-        val match = pattern.find(query)
+        // Pattern matching: "weather in <City>", "temperature in <City>", etc.
+        val weatherPattern = "(?i)\\b(?:weather\\s+in|weather\\s+for|weather\\s+at|temperature\\s+in|temperature\\s+at|forecast\\s+for|forecast\\s+in|climate\\s+in)\\s+([A-Za-z]{3,20})\\b".toRegex()
+        val match = weatherPattern.find(query)
         if (match != null) {
             val candidate = match.groupValues[1].trim()
             val candidateLower = candidate.lowercase(Locale.ROOT)
@@ -342,11 +342,6 @@ class ConversationMemory(private val context: Context? = null) {
     fun addTurn(role: String, text: String) {
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return
-
-        // Extract location from model reply if mentioned (e.g., "In Akola today...")
-        if (role == "model" && activeLocation == null) {
-            extractLocationFromQuery(cleanText)?.let { setActiveLocation(it) }
-        }
 
         turns.add(DialogTurn(role = role, text = cleanText))
 
